@@ -37,7 +37,7 @@ function LiveTicker() {
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
 
-      const formatted = (data.events || []).map((e: any) => {
+      const formatted: Game[] = (data.events || []).map((e: any) => {
         const comp = e.competitions[0];
         const home = comp.competitors.find((c: any) => c.homeAway === 'home');
         const away = comp.competitors.find((c: any) => c.homeAway === 'away');
@@ -55,7 +55,7 @@ function LiveTicker() {
           clock: comp.status.displayClock || '',
           date: startDate,
         };
-      }).filter(g => g.homeTeam.name && g.awayTeam.name);
+      }).filter((g: Game) => g.homeTeam.name && g.awayTeam.name);
 
       setGames(formatted);
       setError(null);
@@ -89,7 +89,7 @@ function LiveTicker() {
   );
 }
 
-// Friday + Saturday (2025–26 season)
+// Friday + Saturday
 const testDays = [
   { day: 1, label: 'Fri Jan 30', date: '2026-01-30', noonET: '2026-01-30T12:00:00-05:00' },
   { day: 2, label: 'Sat Jan 31', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
@@ -146,70 +146,46 @@ export default function Home() {
     setHasSubmitted(false);
   }, [currentShortName]);
 
-  // Fetch Friday + Saturday games from collegebasketballdata.com
+  // Fetch scheduled games from ESPN using date filter
   useEffect(() => {
     const fetchScores = async () => {
       try {
-        // Friday Jan 30 2026
-        console.log('Fetching Friday from ESPN (dates=20260130)');
+        // Friday
         const fridayRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260130');
-        if (!fridayRes.ok) {
-          console.error('Friday ESPN status:', fridayRes.status, await fridayRes.text());
-          throw new Error('Friday fetch failed');
-        }
         const fridayData = await fridayRes.json();
-        console.log('Friday events count:', fridayData.events?.length || 0);
-        console.log('Friday first event (if any):', fridayData.events?.[0] || 'No events');
-  
-        // Saturday Jan 31 2026
-        console.log('Fetching Saturday from ESPN (dates=20260131)');
+
+        // Saturday
         const satRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260131');
-        if (!satRes.ok) {
-          console.error('Saturday ESPN status:', satRes.status, await satRes.text());
-          throw new Error('Saturday fetch failed');
-        }
         const satData = await satRes.json();
-        console.log('Saturday events count:', satData.events?.length || 0);
-        console.log('Saturday first event (if any):', satData.events?.[0] || 'No events');
-  
+
         const allEvents = [...(fridayData.events || []), ...(satData.events || [])];
-  
-        const formatted = allEvents.map((e: any) => {
+
+        const formatted: Game[] = allEvents.map((e: any) => {
           const comp = e.competitions[0];
           const home = comp.competitors.find((c: any) => c.homeAway === 'home');
           const away = comp.competitors.find((c: any) => c.homeAway === 'away');
-  
+
           const startDate = comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '';
-  
+
           return {
             gameId: e.id,
-            homeTeam: {
-              name: home?.team.shortDisplayName || '',
-              score: home?.score || '—',
-              rank: home?.curatedRank?.current || '',
-            },
-            awayTeam: {
-              name: away?.team.shortDisplayName || '',
-              score: away?.score || '—',
-              rank: away?.curatedRank?.current || '',
-            },
+            homeTeam: { name: home?.team.shortDisplayName || '', score: home?.score || '—', rank: home?.curatedRank?.current || '' },
+            awayTeam: { name: away?.team.shortDisplayName || '', score: away?.score || '—', rank: away?.curatedRank?.current || '' },
             status: comp.status.type.description || 'Scheduled',
             clock: comp.status.displayClock || '',
             date: startDate,
           };
-        }).filter(g => g.homeTeam.name && g.awayTeam.name);
-  
+        }).filter((g: Game) => g.homeTeam.name && g.awayTeam.name);
+
         setScoreboard(formatted);
-  
-        console.log('Final ESPN games in app:', formatted.map(g => `${g.awayTeam.name} @ ${g.homeTeam.name} on ${g.date} - ${g.status}`));
       } catch (err) {
         console.error('ESPN fetch error:', err);
       }
     };
-  
+
     fetchScores();
-    const interval = setInterval(fetchScores, 60000);
-    return () => clearInterval(interval);
+    const i = setInterval(fetchScores, 60000);
+    return () => clearInterval(i);
   }, []);
 
   useEffect(() => {
