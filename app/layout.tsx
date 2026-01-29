@@ -1,15 +1,6 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-<style jsx global>{`
-  html {
-    color-scheme: light;
-  }
-  body {
-    color: #111827; /* Tailwind gray-900 */
-    background-color: #f5f5f5;
-  }
-`}</style>
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -40,7 +31,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>{children}</body>
+      <head>
+        {/* Prevent iOS Safari from auto-darkening */}
+        <meta name="color-scheme" content="light" />
+      </head>
+      <body
+        className={`${inter.className} bg-[#f5f5f5] text-gray-900`}
+      >
+        {children}
+      </body>
     </html>
   );
 }
