@@ -1,6 +1,15 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+<style jsx global>{`
+  html {
+    color-scheme: light;
+  }
+  body {
+    color: #111827; /* Tailwind gray-900 */
+    background-color: #f5f5f5;
+  }
+`}</style>
 
 const inter = Inter({ subsets: ['latin'] });
 
