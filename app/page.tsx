@@ -126,10 +126,8 @@ export default function Home() {
     'James Conway',
     'Tom Strobel',
     'Zak Burns',
-    'Alex McAdoo',
-    'Sean Falvey',
     'Tyler Decoster',
-    'Mike Gallagher',
+    ,
   ];
 
   const getShortName = (fullName: string): string => {
@@ -415,7 +413,7 @@ export default function Home() {
 
         <h1 className="text-4xl md:text-5xl font-bold text-[#2A6A5E] mb-4 text-center">NCAA Survivor Pool – Test Week</h1>
         <p className="text-xl text-gray-700 mb-8 text-center max-w-2xl">
-          Simulating Rounds 1 & 2: Thu Jan 29 – Sun Feb 1
+          Simulating Survivor with regular season games 1.30 and 1.31
         </p>
 
         <div className="mb-8 flex gap-4">
@@ -532,7 +530,7 @@ export default function Home() {
           )}
         </div>
 
-        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Troy, MI</footer>
+        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Your Mom's House</footer>
       </main>
     </>
   );
