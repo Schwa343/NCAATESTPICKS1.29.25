@@ -22,7 +22,23 @@ interface Game {
   awayTeam: { name: string; score: string; rank: string | number };
   status: string;
   clock: string;
-  date?: string;
+  date?: string; // YYYY-MM-DD for filtering
+  startTime?: string; // ISO string from API (add this)
+}
+
+// Helper to format ISO UTC time to EST/ET (handles daylight saving automatically)
+function formatESTTime(isoString?: string): string {
+  if (!isoString) return '';
+
+  const date = new Date(isoString);
+
+  // Use Intl to get nice formatted time in America/New_York
+  return date.toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }) + ' ET';
 }
 
 function LiveTicker() {
@@ -42,27 +58,29 @@ function LiveTicker() {
       const todayStr = formatDate(today);
       const yesterdayStr = formatDate(yesterday);
 
-      // Fetch today
-      const todayRes = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}`
-      );
-      let todayEvents = [];
-      if (todayRes.ok) {
-        const todayData = await todayRes.json();
-        todayEvents = todayData.events || [];
-      }
+      let allEvents: any[] = [];
 
-      // Fetch yesterday
-      const yesterdayRes = await fetch(
-        `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}`
-      );
-      let yesterdayEvents = [];
-      if (yesterdayRes.ok) {
-        const yesterdayData = await yesterdayRes.json();
-        yesterdayEvents = yesterdayData.events || [];
-      }
+      // Try today
+      try {
+        const todayRes = await fetch(
+          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}`
+        );
+        if (todayRes.ok) {
+          const data = await todayRes.json();
+          allEvents = [...allEvents, ...(data.events || [])];
+        }
+      } catch {}
 
-      const allEvents = [...yesterdayEvents, ...todayEvents];
+      // Try yesterday
+      try {
+        const yesterdayRes = await fetch(
+          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}`
+        );
+        if (yesterdayRes.ok) {
+          const data = await yesterdayRes.json();
+          allEvents = [...allEvents, ...(data.events || [])];
+        }
+      } catch {}
 
       const formatted: Game[] = allEvents.map((e: any) => {
         const comp = e.competitions?.[0];
@@ -91,6 +109,7 @@ function LiveTicker() {
           status: comp.status.type.description || 'Scheduled',
           clock: comp.status.displayClock || '',
           date: comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
+          startTime: comp.date || '', // ISO UTC start time
         };
       }).filter(Boolean) as Game[];
 
@@ -108,19 +127,11 @@ function LiveTicker() {
   }, []);
 
   if (error) {
-    return (
-      <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">
-        {error}
-      </div>
-    );
+    return <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">{error}</div>;
   }
 
   if (games.length === 0) {
-    return (
-      <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">
-        No games scheduled/live right now
-      </div>
-    );
+    return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No games scheduled/live right now</div>;
   }
 
   const todayStr = new Date().toLocaleDateString('en-CA');
@@ -131,6 +142,7 @@ function LiveTicker() {
         {games.concat(games).map((game, i) => {
           const isYesterday = game.date && game.date < todayStr;
           const isFinal = game.status.toLowerCase().includes('final') || game.status.toLowerCase().includes('ended');
+          const isScheduled = game.status.toLowerCase().includes('scheduled');
 
           let displayStatus = game.status;
           let displayClock = '';
@@ -139,6 +151,9 @@ function LiveTicker() {
             displayStatus = 'Final';
           } else if (isFinal) {
             displayClock = '';
+          } else if (isScheduled && game.startTime) {
+            // Show tip time in EST for scheduled games
+            displayStatus = `Tip: ${formatESTTime(game.startTime)}`;
           } else if (game.clock && game.clock.trim() !== '' && game.clock !== '0:00') {
             displayClock = ` (${game.clock})`;
           }
@@ -164,6 +179,7 @@ function LiveTicker() {
   );
 }
 
+// Your existing constants and Home component (unchanged)
 const testDays = [
   { day: 1, label: 'Fri Jan 30', date: '2026-01-30', noonET: '2026-01-30T12:00:00-05:00' },
   { day: 2, label: 'Sat Jan 31', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
