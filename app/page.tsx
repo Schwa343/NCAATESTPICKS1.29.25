@@ -56,7 +56,6 @@ function LiveTicker() {
 
       let allEvents: any[] = [];
 
-      // Today first
       try {
         const todayRes = await fetch(
           `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}&groups=50&limit=500`
@@ -67,7 +66,6 @@ function LiveTicker() {
         }
       } catch {}
 
-      // Yesterday fallback if needed
       try {
         const yesterdayRes = await fetch(
           `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}&groups=50&limit=500`
@@ -109,14 +107,14 @@ function LiveTicker() {
         };
       }).filter(Boolean) as Game[];
 
-      // Filter 1: exclude completed games
+      // Exclude completed games
       const notCompleted = formatted.filter((g) => {
         const desc = g.status.toLowerCase();
         const isCompleted = desc.includes('final') || desc.includes('end') || desc.includes('complete') || desc.includes('over') || desc.includes('post');
         return !isCompleted;
       });
 
-      // Filter 2: only games with at least one ranked team (1-25)
+      // Only games with at least one ranked team
       const rankedOnly = notCompleted.filter((g) => {
         const homeRank = g.homeTeam.rank;
         const awayRank = g.awayTeam.rank;
@@ -155,7 +153,7 @@ function LiveTicker() {
           100% { transform: translateX(-50%); }
         }
         .animate-marquee {
-          animation: marquee 50s linear infinite; /* Back to 50s */
+          animation: marquee 50s linear infinite;
         }
       `}</style>
       <div className="inline-flex animate-marquee gap-20">
@@ -280,10 +278,11 @@ export default function Home() {
   useEffect(() => {
     const fetchScores = async () => {
       try {
-        const fridayRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260130&groups=50&limit=500');
+        // Reverted to your original fetch logic for pick selection games
+        const fridayRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260130');
         const fridayData = await fridayRes.json();
 
-        const satRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260131&groups=50&limit=500');
+        const satRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260131');
         const satData = await satRes.json();
 
         const allEvents = [...(fridayData.events || []), ...(satData.events || [])];
