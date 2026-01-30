@@ -22,7 +22,23 @@ interface Game {
   awayTeam: { name: string; score: string; rank: string | number };
   status: string;
   clock: string;
-  date?: string; // YYYY-MM-DD
+  date?: string; // YYYY-MM-DD for filtering
+  startTime?: string; // ISO string from API (add this)
+}
+
+// Helper to format ISO UTC time to EST/ET (handles daylight saving automatically)
+function formatESTTime(isoString?: string): string {
+  if (!isoString) return '';
+
+  const date = new Date(isoString);
+
+  // Use Intl to get nice formatted time in America/New_York
+  return date.toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }) + ' ET';
 }
 
 function LiveTicker() {
@@ -31,69 +47,166 @@ function LiveTicker() {
 
   const fetchScores = async () => {
     try {
-      const res = await fetch(
-        'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard'
-      );
-      if (!res.ok) throw new Error('Failed to fetch');
-      const data = await res.json();
+      setError(null);
 
-      const formatted: Game[] = (data.events || []).map((e: any) => {
-        const comp = e.competitions[0];
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+
+      const formatDate = (d: Date) => d.toISOString().split('T')[0].replace(/-/g, '');
+
+      const todayStr = formatDate(today);
+      const yesterdayStr = formatDate(yesterday);
+
+      let allEvents: any[] = [];
+
+      // Try today
+      try {
+        const todayRes = await fetch(
+          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}`
+        );
+        if (todayRes.ok) {
+          const data = await todayRes.json();
+          allEvents = [...allEvents, ...(data.events || [])];
+        }
+      } catch {}
+
+      // Try yesterday
+      try {
+        const yesterdayRes = await fetch(
+          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}`
+        );
+        if (yesterdayRes.ok) {
+          const data = await yesterdayRes.json();
+          allEvents = [...allEvents, ...(data.events || [])];
+        }
+      } catch {}
+
+      const formatted: Game[] = allEvents.map((e: any) => {
+        const comp = e.competitions?.[0];
+        if (!comp) return null;
+
         const home = comp.competitors.find((c: any) => c.homeAway === 'home');
         const away = comp.competitors.find((c: any) => c.homeAway === 'away');
 
-        const homeScore = Number(home?.score) || 0;
-        const awayScore = Number(away?.score) || 0;
+        if (!home || !away) return null;
 
-        const startDate = comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '';
+        const homeRankNum = Number(home.curatedRank?.current);
+        const awayRankNum = Number(away.curatedRank?.current);
 
         return {
           gameId: e.id,
-          homeTeam: { name: home?.team.shortDisplayName || '', score: home?.score || '—', rank: home?.curatedRank?.current || '' },
-          awayTeam: { name: away?.team.shortDisplayName || '', score: away?.score || '—', rank: away?.curatedRank?.current || '' },
-          status: comp.status.type.description || 'Unknown',
+          homeTeam: {
+            name: home.team.shortDisplayName || home.team.displayName || '',
+            score: home.score || '—',
+            rank: !isNaN(homeRankNum) && homeRankNum >= 1 && homeRankNum <= 25 ? homeRankNum : '',
+          },
+          awayTeam: {
+            name: away.team.shortDisplayName || away.team.displayName || '',
+            score: away.score || '—',
+            rank: !isNaN(awayRankNum) && awayRankNum >= 1 && awayRankNum <= 25 ? awayRankNum : '',
+          },
+          status: comp.status.type.description || 'Scheduled',
           clock: comp.status.displayClock || '',
-          date: startDate,
+          date: comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
+          startTime: comp.date || '', // ISO UTC start time
         };
-      }).filter((g: Game) => g.homeTeam.name && g.awayTeam.name);
+      }).filter(Boolean) as Game[];
 
       setGames(formatted);
-      setError(null);
     } catch (err) {
-      console.error(err);
+      console.error('Ticker fetch error:', err);
       setError('Live scores unavailable');
     }
   };
 
   useEffect(() => {
     fetchScores();
-    const interval = setInterval(fetchScores, 45000);
+    const interval = setInterval(fetchScores, 60000);
     return () => clearInterval(interval);
   }, []);
 
-  if (error) return <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">{error}</div>;
-  if (games.length === 0) return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No games scheduled/live right now</div>;
+  if (error) {
+    return <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">{error}</div>;
+  }
+
+  if (games.length === 0) {
+    return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No games scheduled/live right now</div>;
+  }
+
+  const todayStr = new Date().toLocaleDateString('en-CA');
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-[#2A6A5E] text-white py-3 px-4 overflow-hidden whitespace-nowrap shadow-lg">
-      <div className="inline-flex animate-marquee gap-12">
-        {games.concat(games).map((game, i) => (
-          <span key={i} className="font-medium">
-            {game.homeTeam.rank ? `#${game.homeTeam.rank} ` : ''}{game.homeTeam.name} {game.homeTeam.score} @
-            {game.awayTeam.rank ? `#${game.awayTeam.rank} ` : ''}{game.awayTeam.name} {game.awayTeam.score}{' '}
-            <span className="text-yellow-300 font-semibold">{game.status} {game.clock && `(${game.clock})`}</span>
-          </span>
-        ))}
+      <div className="inline-flex animate-marquee gap-20">
+        {games.concat(games).map((game, i) => {
+          const isYesterday = game.date && game.date < todayStr;
+          const isFinal = game.status.toLowerCase().includes('final') || game.status.toLowerCase().includes('ended');
+          const isScheduled = game.status.toLowerCase().includes('scheduled');
+
+          let displayStatus = game.status;
+          let displayClock = '';
+
+          if (isYesterday) {
+            displayStatus = 'Final';
+          } else if (isFinal) {
+            displayClock = '';
+          } else if (isScheduled && game.startTime) {
+            // Show tip time in EST for scheduled games
+            displayStatus = `Tip: ${formatESTTime(game.startTime)}`;
+          } else if (game.clock && game.clock.trim() !== '' && game.clock !== '0:00') {
+            displayClock = ` (${game.clock})`;
+          }
+
+          const awayScore = game.awayTeam.score !== '—' ? ` ${game.awayTeam.score}` : '';
+          const homeScore = game.homeTeam.score !== '—' ? ` ${game.homeTeam.score}` : '';
+
+          return (
+            <span key={i} className="font-medium">
+              {game.awayTeam.rank ? `#${game.awayTeam.rank} ` : ''}
+              {game.awayTeam.name}{awayScore} @
+              {game.homeTeam.rank ? `#${game.homeTeam.rank} ` : ''}
+              {game.homeTeam.name}{homeScore}
+              {' '}
+              <span className="text-yellow-300 font-semibold">
+                {displayStatus}{displayClock}
+              </span>
+            </span>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// Friday + Saturday
+// Your existing constants and Home component (unchanged)
 const testDays = [
   { day: 1, label: 'Fri Jan 30', date: '2026-01-30', noonET: '2026-01-30T12:00:00-05:00' },
   { day: 2, label: 'Sat Jan 31', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
 ];
+
+const averageDaysSurvived: Record<string, number> = {
+  "Patrick Gifford": 4.4,
+  "Garret Gotaas": 2.8,
+  "Mike Schwartz": 3.5,
+  "Derrick Defever": 2.9,
+  "Matt Syzmanski": 4.1,
+  "Connor Giroux": 3.1,
+  "Nick Dahl": 4.4,
+  "Chris Canada": 2.9,
+  "Brian Burger": 4.0,
+  "Rich Deward": 4.4,
+  "Peter Murray": 3.1,
+  "Spenser Pawlik": 3.7,
+  "Nick Mowid": 3.4,
+  "James Conway": 3.3,
+  "Tom Strobel": 1.0,
+  "Zak Burns": 1.4,
+  "Alex McAdoo": 5.0,
+  "Sean Falvey": 4.0,
+  "Tyler Decoster": 6.5,
+  "Mike Gallagher": 1.0,
+};
 
 export default function Home() {
   const [firstName, setFirstName] = useState('');
@@ -104,7 +217,7 @@ export default function Home() {
   const [scoreboard, setScoreboard] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [forceRevealed, setForceRevealed] = useState(false);
-  const [currentDay, setCurrentDay] = useState(1); // Friday
+  const [currentDay, setCurrentDay] = useState(1);
   const [nameLocked, setNameLocked] = useState(false);
   const [usedTeams, setUsedTeams] = useState<string[]>([]);
   const [hasSubmitted, setHasSubmitted] = useState(false);
@@ -146,26 +259,21 @@ export default function Home() {
     setHasSubmitted(false);
   }, [currentShortName]);
 
-  // Fetch scheduled games from ESPN using date filter
   useEffect(() => {
     const fetchScores = async () => {
       try {
-        // Friday
         const fridayRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260130');
         const fridayData = await fridayRes.json();
 
-        // Saturday
         const satRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260131');
         const satData = await satRes.json();
 
         const allEvents = [...(fridayData.events || []), ...(satData.events || [])];
 
-        const formatted: Game[] = allEvents.map((e: any) => {
+        const formatted = allEvents.map((e: any) => {
           const comp = e.competitions[0];
           const home = comp.competitors.find((c: any) => c.homeAway === 'home');
           const away = comp.competitors.find((c: any) => c.homeAway === 'away');
-
-          const startDate = comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '';
 
           return {
             gameId: e.id,
@@ -173,7 +281,7 @@ export default function Home() {
             awayTeam: { name: away?.team.shortDisplayName || '', score: away?.score || '—', rank: away?.curatedRank?.current || '' },
             status: comp.status.type.description || 'Scheduled',
             clock: comp.status.displayClock || '',
-            date: startDate,
+            date: comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
           };
         }).filter((g: Game) => g.homeTeam.name && g.awayTeam.name);
 
@@ -184,7 +292,7 @@ export default function Home() {
     };
 
     fetchScores();
-    const i = setInterval(fetchScores, 60000);
+    const i = setInterval(fetchScores, 90000);
     return () => clearInterval(i);
   }, []);
 
@@ -404,8 +512,13 @@ export default function Home() {
   return (
     <>
       <style jsx global>{`
-        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-        .animate-marquee { animation: marquee 80s linear infinite; }
+        @keyframes marquee {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        .animate-marquee {
+          animation: marquee 70s linear infinite;
+        }
       `}</style>
 
       <LiveTicker />
@@ -485,6 +598,7 @@ export default function Home() {
                 <tr>
                   <th className="py-4 px-5 text-left">Name</th>
                   <th className="py-4 px-5">Status</th>
+                  <th className="py-4 px-5 text-center">Avg Days</th>
                   {testDays.map(d => (
                     <th key={d.day} className="py-4 px-5 text-center">{d.label}</th>
                   ))}
@@ -498,6 +612,13 @@ export default function Home() {
                   const dayRound = `Day ${currentDay}`;
                   const isDead = isDeadForDay(entry.picks, dayRound);
 
+                  const avg = averageDaysSurvived[entry.fullName];
+                  let avgClass = "text-gray-600";
+                  if (avg >= 4.5) avgClass = "text-green-700 font-semibold";
+                  else if (avg >= 3.5) avgClass = "text-emerald-600 font-medium";
+                  else if (avg >= 2.5) avgClass = "text-amber-700";
+                  else avgClass = "text-gray-500";
+
                   return (
                     <tr key={entry.fullName} className="border-b hover:bg-gray-50/70">
                       <td className={`py-4 px-5 font-medium ${isDead ? 'text-red-600 font-bold' : 'text-gray-800'}`}>
@@ -509,6 +630,11 @@ export default function Home() {
                         ) : (
                           <span className="text-green-600">Alive</span>
                         )}
+                      </td>
+                      <td className="py-4 px-5 text-center">
+                        <span className={avgClass}>
+                          {avg ? avg.toFixed(1) : '—'}
+                        </span>
                       </td>
                       {testDays.map(d => {
                         const pick = getPickForDay(entry.picks, `Day ${d.day}`);
