@@ -22,17 +22,13 @@ interface Game {
   awayTeam: { name: string; score: string; rank: string | number };
   status: string;
   clock: string;
-  date?: string; // YYYY-MM-DD for filtering
-  startTime?: string; // ISO string from API (add this)
+  date?: string; // YYYY-MM-DD
+  startTime?: string; // ISO
 }
 
-// Helper to format ISO UTC time to EST/ET (handles daylight saving automatically)
 function formatESTTime(isoString?: string): string {
   if (!isoString) return '';
-
   const date = new Date(isoString);
-
-  // Use Intl to get nice formatted time in America/New_York
   return date.toLocaleTimeString('en-US', {
     timeZone: 'America/New_York',
     hour: 'numeric',
@@ -60,10 +56,9 @@ function LiveTicker() {
 
       let allEvents: any[] = [];
 
-      // Try today
       try {
         const todayRes = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}`
+          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}&groups=50&limit=500`
         );
         if (todayRes.ok) {
           const data = await todayRes.json();
@@ -71,10 +66,9 @@ function LiveTicker() {
         }
       } catch {}
 
-      // Try yesterday
       try {
         const yesterdayRes = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}`
+          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}&groups=50&limit=500`
         );
         if (yesterdayRes.ok) {
           const data = await yesterdayRes.json();
@@ -109,11 +103,26 @@ function LiveTicker() {
           status: comp.status.type.description || 'Scheduled',
           clock: comp.status.displayClock || '',
           date: comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
-          startTime: comp.date || '', // ISO UTC start time
+          startTime: comp.date || '',
         };
       }).filter(Boolean) as Game[];
 
-      setGames(formatted);
+      // Exclude completed games
+      const notCompleted = formatted.filter((g) => {
+        const desc = g.status.toLowerCase();
+        const isCompleted = desc.includes('final') || desc.includes('end') || desc.includes('complete') || desc.includes('over') || desc.includes('post');
+        return !isCompleted;
+      });
+
+      // Only games with at least one ranked team
+      const rankedOnly = notCompleted.filter((g) => {
+        const homeRank = g.homeTeam.rank;
+        const awayRank = g.awayTeam.rank;
+        return (typeof homeRank === 'number' && homeRank >= 1 && homeRank <= 25) ||
+               (typeof awayRank === 'number' && awayRank >= 1 && awayRank <= 25);
+      });
+
+      setGames(rankedOnly);
     } catch (err) {
       console.error('Ticker fetch error:', err);
       setError('Live scores unavailable');
@@ -131,13 +140,22 @@ function LiveTicker() {
   }
 
   if (games.length === 0) {
-    return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No games scheduled/live right now</div>;
+    return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No ranked games live/upcoming right now</div>;
   }
 
   const todayStr = new Date().toLocaleDateString('en-CA');
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-[#2A6A5E] text-white py-3 px-4 overflow-hidden whitespace-nowrap shadow-lg">
+      <style jsx global>{`
+        @keyframes marquee {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        .animate-marquee {
+          animation: marquee 50s linear infinite;
+        }
+      `}</style>
       <div className="inline-flex animate-marquee gap-20">
         {games.concat(games).map((game, i) => {
           const isYesterday = game.date && game.date < todayStr;
@@ -152,7 +170,6 @@ function LiveTicker() {
           } else if (isFinal) {
             displayClock = '';
           } else if (isScheduled && game.startTime) {
-            // Show tip time in EST for scheduled games
             displayStatus = `Tip: ${formatESTTime(game.startTime)}`;
           } else if (game.clock && game.clock.trim() !== '' && game.clock !== '0:00') {
             displayClock = ` (${game.clock})`;
@@ -179,7 +196,6 @@ function LiveTicker() {
   );
 }
 
-// Your existing constants and Home component (unchanged)
 const testDays = [
   { day: 1, label: 'Fri Jan 30', date: '2026-01-30', noonET: '2026-01-30T12:00:00-05:00' },
   { day: 2, label: 'Sat Jan 31', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
@@ -262,6 +278,7 @@ export default function Home() {
   useEffect(() => {
     const fetchScores = async () => {
       try {
+        // Reverted to your original fetch logic for pick selection games
         const fridayRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260130');
         const fridayData = await fridayRes.json();
 
@@ -283,7 +300,7 @@ export default function Home() {
             clock: comp.status.displayClock || '',
             date: comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
           };
-        }).filter((g: Game) => g.homeTeam.name && g.awayTeam.name);
+        }).filter((g) => g.homeTeam.name && g.awayTeam.name);
 
         setScoreboard(formatted);
       } catch (err) {
@@ -497,6 +514,16 @@ export default function Home() {
     return picks.find(p => p.round === round)?.team || '—';
   };
 
+  const getDisplayPick = (picks: any[], round: string, dayInfo: typeof testDays[0]) => {
+    const pick = getPickForDay(picks, round);
+    if (pick && pick !== '—') return pick;
+
+    if (new Date(dayInfo.noonET) <= new Date()) {
+      return <span className="text-red-600 font-bold">SHAME</span>;
+    }
+    return '—';
+  };
+
   const selectedDayInfo = testDays.find(d => d.day === currentDay);
   const dayGames = scoreboard.filter(g => g.date === selectedDayInfo?.date);
   const availableTeams = [...new Set(
@@ -507,7 +534,17 @@ export default function Home() {
     const short = getShortName(full);
     const userData = userPicks.find(u => u.name === short) || { picks: [], status: 'alive' };
     return { fullName: full, shortName: short, picks: userData.picks, status: userData.status };
-  }).sort((a,b) => a.fullName.localeCompare(b.fullName));
+  });
+
+  const sortedParticipants = [...displayedParticipants].sort((a, b) => {
+    if (a.shortName === currentShortName) return -1;
+    if (b.shortName === currentShortName) return 1;
+
+    if (a.status === 'alive' && b.status !== 'alive') return -1;
+    if (a.status !== 'alive' && b.status === 'alive') return 1;
+
+    return a.fullName.localeCompare(b.fullName);
+  });
 
   return (
     <>
@@ -517,7 +554,39 @@ export default function Home() {
           100% { transform: translateX(-50%); }
         }
         .animate-marquee {
-          animation: marquee 70s linear infinite;
+          animation: marquee 50s linear infinite;
+        }
+
+        .heartbeat-alive {
+          display: inline-block;
+          width: 60px;
+          height: 20px;
+          margin-left: 8px;
+          vertical-align: middle;
+        }
+        .heartbeat-alive svg {
+          width: 100%;
+          height: 100%;
+        }
+        .heartbeat-alive .pulse {
+          animation: heartbeat 1.4s infinite ease-in-out;
+          stroke: #22c55e;
+          stroke-width: 3;
+          fill: none;
+        }
+        @keyframes heartbeat {
+          0%, 100% { d: path("M0 10 L10 10 L15 2 L20 18 L25 10 L35 10"); }
+          40%      { d: path("M0 10 L10 10 L13 4 L17 16 L21 10 L35 10"); }
+          60%      { d: path("M0 10 L10 10 L14 6 L18 14 L22 10 L35 10"); }
+        }
+
+        .flatline-dead {
+          display: inline-block;
+          width: 60px;
+          height: 20px;
+          margin-left: 8px;
+          vertical-align: middle;
+          border-bottom: 3px solid #ef4444;
         }
       `}</style>
 
@@ -553,16 +622,25 @@ export default function Home() {
             <p className="text-gray-500 italic">No games scheduled for {selectedDayInfo?.label} or loading...</p>
           ) : availableTeams.map(team => {
             const isUsed = usedTeams.includes(team);
+
+            const game = scoreboard.find(g => 
+              g.homeTeam.name === team || g.awayTeam.name === team
+            );
+            const rank = game 
+              ? (game.homeTeam.name === team ? game.homeTeam.rank : game.awayTeam.rank)
+              : '';
+            const rankDisplay = rank ? `#${rank} ` : '';
+
             return (
               <button
                 key={team}
                 onClick={() => !isUsed && setSelectedTeam(team)}
                 disabled={isUsed || currentDayLocked}
-                className={`px-5 py-2.5 min-w-[140px] border-2 border-[#2A6A5E] rounded-lg font-medium transition-all
+                className={`px-5 py-2.5 min-w-[160px] border-2 border-[#2A6A5E] rounded-lg font-medium transition-all
                   ${selectedTeam === team ? 'bg-[#2A6A5E] text-white shadow-md' : 'bg-white text-[#2A6A5E] hover:bg-gray-50'}
                   ${isUsed || currentDayLocked ? 'opacity-60 line-through cursor-not-allowed bg-gray-100' : ''}`}
               >
-                {team}
+                {rankDisplay}{team}
               </button>
             );
           })}
@@ -605,12 +683,11 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody>
-                {displayedParticipants.map(entry => {
+                {sortedParticipants.map(entry => {
                   const isOwn = entry.shortName === currentShortName;
                   const visible = hasSubmitted && isOwn || forceRevealed;
 
-                  const dayRound = `Day ${currentDay}`;
-                  const isDead = isDeadForDay(entry.picks, dayRound);
+                  const isDead = entry.status !== 'alive';
 
                   const avg = averageDaysSurvived[entry.fullName];
                   let avgClass = "text-gray-600";
@@ -624,11 +701,21 @@ export default function Home() {
                       <td className={`py-4 px-5 font-medium ${isDead ? 'text-red-600 font-bold' : 'text-gray-800'}`}>
                         {entry.fullName}
                       </td>
-                      <td className="py-4 px-5 font-medium">
+                      <td className="py-4 px-5 font-medium flex items-center">
                         {isDead ? (
-                          <span className="text-red-600 font-bold">Dead</span>
+                          <>
+                            <span className="text-red-600 font-bold">Dead</span>
+                            <div className="flatline-dead" />
+                          </>
                         ) : (
-                          <span className="text-green-600">Alive</span>
+                          <>
+                            <span className="text-green-600">Alive</span>
+                            <div className="heartbeat-alive">
+                              <svg viewBox="0 0 35 20">
+                                <path className="pulse" d="M0 10 L10 10 L15 2 L20 18 L25 10 L35 10" />
+                              </svg>
+                            </div>
+                          </>
                         )}
                       </td>
                       <td className="py-4 px-5 text-center">
@@ -637,16 +724,18 @@ export default function Home() {
                         </span>
                       </td>
                       {testDays.map(d => {
-                        const pick = getPickForDay(entry.picks, `Day ${d.day}`);
+                        const dayRound = `Day ${d.day}`;
                         const dayPassedNoon = new Date(d.noonET) <= new Date();
                         const cellVisible = visible || dayPassedNoon;
+
+                        const displayPick = getDisplayPick(entry.picks, dayRound, d);
 
                         return (
                           <td
                             key={d.day}
-                            className={`py-4 px-5 text-center font-semibold ${cellVisible ? getPickColor(pick) : 'bg-gray-200 text-transparent blur-sm select-none'}`}
+                            className={`py-4 px-5 text-center font-semibold ${cellVisible ? getPickColor(getPickForDay(entry.picks, dayRound)) : 'bg-gray-200 text-transparent blur-sm select-none'}`}
                           >
-                            {cellVisible ? (pick || '—') : '███'}
+                            {cellVisible ? displayPick : '███'}
                           </td>
                         );
                       })}
@@ -658,7 +747,7 @@ export default function Home() {
           )}
         </div>
 
-        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Troy, MI</footer>
+        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Your Moms House, MI</footer>
       </main>
     </>
   );
