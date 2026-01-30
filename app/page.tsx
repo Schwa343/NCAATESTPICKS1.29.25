@@ -527,7 +527,16 @@ export default function Home() {
     }
     return '—';
   };
-
+  const availableTeamsForDay = (day: number) => {
+    const dayInfo = testDays.find(d => d.day === day);
+    if (!dayInfo) return [];
+  
+    const gamesForDay = scoreboard.filter(g => g.date === dayInfo.date);
+  
+    return [...new Set(
+      gamesForDay.flatMap(g => [g.homeTeam.name, g.awayTeam.name]).filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b));
+  };
   const selectedDayInfo = testDays.find(d => d.day === currentDay);
   const dayGames = scoreboard.filter(g => g.date === selectedDayInfo?.date);
   const availableTeams = [...new Set(
