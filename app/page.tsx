@@ -236,6 +236,8 @@ export default function Home() {
   const [currentDay, setCurrentDay] = useState(1);
   const [nameLocked, setNameLocked] = useState(false);
   const [usedTeams, setUsedTeams] = useState<string[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [editingCell, setEditingCell] = useState<{ name: string; round: string } | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
 
   const participantNames = [
@@ -406,11 +408,13 @@ export default function Home() {
 
     if (trimmedFirst.toLowerCase() === 'stanley' && trimmedInitial === 'S') {
       setForceRevealed(true);
-      setStatusMessage('All picks revealed permanently!');
-      setTimeout(() => setStatusMessage(''), 3000);
+      setIsAdmin(true);
+      setStatusMessage('Admin mode activated — all picks revealed & editable!');
+      setTimeout(() => setStatusMessage(''), 4000);
       setFirstName('');
       setLastInitial('');
       return;
+    
     }
 
     const allowedShortNames = participantNames.map(getShortName);
@@ -605,6 +609,12 @@ export default function Home() {
           <input type="text" placeholder="L" maxLength={1} value={lastInitial} onChange={e => setLastInitial(e.target.value.toUpperCase().slice(0,1))} disabled={nameLocked} className="px-3 py-2 border rounded w-14 text-center" />
         </div>
 
+        {isAdmin && (
+  <p className="text-center text-lg font-bold text-purple-700 mb-6">
+    ADMIN MODE ACTIVE — Click any pick cell to edit
+  </p>
+)}
+
         <div className="mb-8 flex flex-wrap gap-3 justify-center">
           {testDays.map(d => (
             <button
@@ -724,21 +734,91 @@ export default function Home() {
                         </span>
                       </td>
                       {testDays.map(d => {
-                        const dayRound = `Day ${d.day}`;
-                        const dayPassedNoon = new Date(d.noonET) <= new Date();
-                        const cellVisible = visible || dayPassedNoon;
+  const dayRound = `Day ${d.day}`;
+  const dayPassedNoon = new Date(d.noonET) <= new Date();
+  const cellVisible = visible || dayPassedNoon || isAdmin;
 
-                        const displayPick = getDisplayPick(entry.picks, dayRound, d);
+  const displayPick = getDisplayPick(entry.picks, dayRound, d);
+  const currentPick = getPickForDay(entry.picks, dayRound);
+  const isEditingThisCell = isAdmin && editingCell?.name === entry.shortName && editingCell?.round === dayRound;
 
-                        return (
-                          <td
-                            key={d.day}
-                            className={`py-4 px-5 text-center font-semibold ${cellVisible ? getPickColor(getPickForDay(entry.picks, dayRound)) : 'bg-gray-200 text-transparent blur-sm select-none'}`}
-                          >
-                            {cellVisible ? displayPick : '███'}
-                          </td>
-                        );
-                      })}
+  return (
+    <td
+      key={d.day}
+      className={`py-4 px-5 text-center font-semibold cursor-pointer ${cellVisible ? getPickColor(currentPick) : 'bg-gray-200 text-transparent blur-sm select-none'}`}
+      onClick={() => {
+        if (isAdmin && !isEditingThisCell && cellVisible) {
+          setEditingCell({ name: entry.shortName, round: dayRound });
+        }
+      }}
+    >
+      {isEditingThisCell ? (
+        <select
+          autoFocus
+          value={currentPick || ''}
+          onChange={async (e) => {
+            const newTeam = e.target.value;
+            if (!newTeam) {
+              setEditingCell(null);
+              return;
+            }
+
+            // Prevent duplicate team for this person
+            const userPicksArray = entry.picks || [];
+            const alreadyPicked = userPicksArray.some(
+              (p: { team: string; round: string }) => p.team === newTeam && p.round !== dayRound
+            );
+            if (alreadyPicked) {
+              alert(`This person already picked ${newTeam} on another day.`);
+              setEditingCell(null);
+              return;
+            }
+
+            try {
+              const ref = collection(db, 'picks');
+              const q = query(ref, where('name', '==', entry.shortName), where('round', '==', dayRound));
+              const existing = await getDocs(q);
+
+              if (!existing.empty) {
+                await updateDoc(doc(db, 'picks', existing.docs[0].id), {
+                  team: newTeam,
+                  timestamp: serverTimestamp(),
+                  createdAt: new Date().toISOString(),
+                });
+              } else {
+                await addDoc(ref, {
+                  name: entry.shortName,
+                  team: newTeam,
+                  round: dayRound,
+                  timestamp: serverTimestamp(),
+                  createdAt: new Date().toISOString(),
+                });
+              }
+
+              setStatusMessage(`Updated ${entry.fullName}'s ${dayRound} pick to ${newTeam}`);
+              setTimeout(() => setStatusMessage(''), 3000);
+            } catch (err: any) {
+              setStatusMessage('Save failed: ' + err.message);
+            }
+
+            setEditingCell(null);
+          }}
+          onBlur={() => setEditingCell(null)}
+          className="w-full text-center bg-white border border-gray-300 rounded px-1 py-0.5"
+        >
+          <option value="">—</option>
+          {availableTeamsForDay(d.day).map(team => (
+            <option key={team} value={team}>
+              {team}
+            </option>
+          ))}
+        </select>
+      ) : (
+        cellVisible ? displayPick : '███'
+      )}
+    </td>
+  );
+})}
                     </tr>
                   );
                 })}
