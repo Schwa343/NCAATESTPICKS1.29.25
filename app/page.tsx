@@ -95,6 +95,29 @@ const testDays = [
   { day: 2, label: 'Sat Jan 31', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
 ];
 
+const averageDaysSurvived: Record<string, number> = {
+  "Patrick Gifford": 4.4,
+  "Garret Gotaas": 2.8,
+  "Mike Schwartz": 3.5,
+  "Derrick Defever": 2.9,
+  "Matt Syzmanski": 4.1,
+  "Connor Giroux": 3.1,
+  "Nick Dahl": 4.4,
+  "Chris Canada": 2.9,
+  "Brian Burger": 4.0,
+  "Rich Deward": 4.4,
+  "Peter Murray": 3.1,
+  "Spenser Pawlik": 3.7,
+  "Nick Mowid": 3.4,
+  "James Conway": 3.3,
+  "Tom Strobel": 1.0,
+  "Zak Burns": 1.4,
+  "Alex McAdoo": 5.0,
+  "Sean Falvey": 4.0,
+  "Tyler Decoster": 6.5,
+  "Mike Gallagher": 1.0,
+};
+
 export default function Home() {
   const [firstName, setFirstName] = useState('');
   const [lastInitial, setLastInitial] = useState('');
@@ -485,6 +508,7 @@ export default function Home() {
                 <tr>
                   <th className="py-4 px-5 text-left">Name</th>
                   <th className="py-4 px-5">Status</th>
+                  <th className="py-4 px-5 text-center">Avg Days</th>
                   {testDays.map(d => (
                     <th key={d.day} className="py-4 px-5 text-center">{d.label}</th>
                   ))}
@@ -498,6 +522,13 @@ export default function Home() {
                   const dayRound = `Day ${currentDay}`;
                   const isDead = isDeadForDay(entry.picks, dayRound);
 
+                  const avg = averageDaysSurvived[entry.fullName];
+                  let avgClass = "text-gray-600";
+                  if (avg >= 4.5) avgClass = "text-green-700 font-semibold";
+                  else if (avg >= 3.5) avgClass = "text-emerald-600 font-medium";
+                  else if (avg >= 2.5) avgClass = "text-amber-700";
+                  else avgClass = "text-gray-500";
+
                   return (
                     <tr key={entry.fullName} className="border-b hover:bg-gray-50/70">
                       <td className={`py-4 px-5 font-medium ${isDead ? 'text-red-600 font-bold' : 'text-gray-800'}`}>
@@ -509,6 +540,11 @@ export default function Home() {
                         ) : (
                           <span className="text-green-600">Alive</span>
                         )}
+                      </td>
+                      <td className="py-4 px-5 text-center">
+                        <span className={avgClass}>
+                          {avg ? avg.toFixed(1) : '—'}
+                        </span>
                       </td>
                       {testDays.map(d => {
                         const pick = getPickForDay(entry.picks, `Day ${d.day}`);
