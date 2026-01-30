@@ -747,7 +747,7 @@ export default function Home() {
           )}
         </div>
 
-        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Your Mom's House, MI</footer>
+        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Your Moms House, MI</footer>
       </main>
     </>
   );
