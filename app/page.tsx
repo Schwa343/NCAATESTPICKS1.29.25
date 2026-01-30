@@ -33,38 +33,13 @@ function LiveTicker() {
     try {
       setError(null);
 
-      const today = new Date();
-      const yesterday = new Date(today);
-      yesterday.setDate(today.getDate() - 1);
+      const res = await fetch(
+        'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard'
+      );
+      if (!res.ok) throw new Error('Failed to fetch scoreboard');
+      const data = await res.json();
 
-      const formatDate = (d: Date) => d.toISOString().split('T')[0].replace(/-/g, '');
-
-      const todayStr = formatDate(today);
-      const yesterdayStr = formatDate(yesterday);
-
-      let allEvents: any[] = [];
-
-      try {
-        const todayRes = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}`
-        );
-        if (todayRes.ok) {
-          const data = await todayRes.json();
-          allEvents = [...allEvents, ...(data.events || [])];
-        }
-      } catch {}
-
-      try {
-        const yesterdayRes = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}`
-        );
-        if (yesterdayRes.ok) {
-          const data = await yesterdayRes.json();
-          allEvents = [...allEvents, ...(data.events || [])];
-        }
-      } catch {}
-
-      const formatted: Game[] = allEvents.map((e: any) => {
+      const formatted: Game[] = (data.events || []).map((e: any) => {
         const comp = e.competitions?.[0];
         if (!comp) return null;
 
@@ -107,26 +82,30 @@ function LiveTicker() {
     return () => clearInterval(interval);
   }, []);
 
-  if (error) return <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">{error}</div>;
-  if (games.length === 0) return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No games scheduled/live right now</div>;
+  if (error) {
+    return (
+      <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">
+        {error}
+      </div>
+    );
+  }
 
-  const todayStr = new Date().toLocaleDateString('en-CA');
+  if (games.length === 0) {
+    return (
+      <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">
+        No games scheduled/live right now
+      </div>
+    );
+  }
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-[#2A6A5E] text-white py-3 px-4 overflow-hidden whitespace-nowrap shadow-lg">
       <div className="inline-flex animate-marquee gap-20">
         {games.concat(games).map((game, i) => {
-          const isYesterday = game.date && game.date < todayStr;
           const isFinal = game.status.toLowerCase().includes('final') || game.status.toLowerCase().includes('ended');
 
-          let displayStatus = game.status;
           let displayClock = '';
-
-          if (isYesterday) {
-            displayStatus = 'Final';
-          } else if (isFinal) {
-            displayClock = '';
-          } else if (game.clock && game.clock.trim() !== '' && game.clock !== '0:00') {
+          if (!isFinal && game.clock && game.clock.trim() !== '' && game.clock !== '0:00') {
             displayClock = ` (${game.clock})`;
           }
 
@@ -141,7 +120,7 @@ function LiveTicker() {
               {game.homeTeam.name}{homeScore}
               {' '}
               <span className="text-yellow-300 font-semibold">
-                {displayStatus}{displayClock}
+                {game.status}{displayClock}
               </span>
             </span>
           );
