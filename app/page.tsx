@@ -47,10 +47,22 @@ function LiveTicker() {
 
         const startDate = comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '';
 
+        // Only show rank if it's a realistic number (1–50)
+        const homeRank = Number(home?.curatedRank?.current);
+        const awayRank = Number(away?.curatedRank?.current);
+
         return {
           gameId: e.id,
-          homeTeam: { name: home?.team.shortDisplayName || '', score: home?.score || '—', rank: home?.curatedRank?.current || '' },
-          awayTeam: { name: away?.team.shortDisplayName || '', score: away?.score || '—', rank: away?.curatedRank?.current || '' },
+          homeTeam: {
+            name: home?.team.shortDisplayName || '',
+            score: home?.score || '—',
+            rank: isNaN(homeRank) || homeRank <= 0 || homeRank > 50 ? '' : homeRank,
+          },
+          awayTeam: {
+            name: away?.team.shortDisplayName || '',
+            score: away?.score || '—',
+            rank: isNaN(awayRank) || awayRank <= 0 || awayRank > 50 ? '' : awayRank,
+          },
           status: comp.status.type.description || 'Unknown',
           clock: comp.status.displayClock || '',
           date: startDate,
@@ -76,14 +88,28 @@ function LiveTicker() {
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-[#2A6A5E] text-white py-3 px-4 overflow-hidden whitespace-nowrap shadow-lg">
-      <div className="inline-flex animate-marquee gap-12">
-        {games.concat(games).map((game, i) => (
-          <span key={i} className="font-medium">
-            {game.homeTeam.rank ? `#${game.homeTeam.rank} ` : ''}{game.homeTeam.name} {game.homeTeam.score} @
-            {game.awayTeam.rank ? `#${game.awayTeam.rank} ` : ''}{game.awayTeam.name} {game.awayTeam.score}{' '}
-            <span className="text-yellow-300 font-semibold">{game.status} {game.clock && `(${game.clock})`}</span>
-          </span>
-        ))}
+      <div className="inline-flex animate-marquee gap-16">
+        {games.concat(games).map((game, i) => {
+          const isFinal = game.status.toLowerCase().includes('final') || 
+                         game.status.toLowerCase().includes('ended');
+
+          // Only show clock if game is NOT final and clock is meaningful
+          const showClock = !isFinal && game.clock && game.clock !== '0:00' && game.clock !== '';
+
+          return (
+            <span key={i} className="font-medium">
+              {game.awayTeam.rank && `#${game.awayTeam.rank} `}
+              {game.awayTeam.name} {game.awayTeam.score} @
+              {game.homeTeam.rank && `#${game.homeTeam.rank} `}
+              {game.homeTeam.name} {game.homeTeam.score}
+              {' '}
+              <span className="text-yellow-300 font-semibold">
+                {game.status}
+                {showClock && ` (${game.clock})`}
+              </span>
+            </span>
+          );
+        })}
       </div>
     </div>
   );
@@ -427,8 +453,13 @@ export default function Home() {
   return (
     <>
       <style jsx global>{`
-        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-        .animate-marquee { animation: marquee 80s linear infinite; }
+        @keyframes marquee {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        .animate-marquee {
+          animation: marquee 65s linear infinite;
+        }
       `}</style>
 
       <LiveTicker />
