@@ -654,7 +654,9 @@ export default function Home() {
 
                                   // Prevent duplicate team for this person
                                   const userPicksArray = entry.picks || [];
-                                  const alreadyPicked = userPicksArray.some(p => p.team === newTeam && p.round !== round);
+                                  const alreadyPicked = userPicksArray.some(
+                                    (p: { team: string; round: string }) => p.team === newTeam && p.round !== round
+                                  );
                                   if (alreadyPicked) {
                                     alert(`This person already picked ${newTeam} on another day.`);
                                     setEditingCell(null);
@@ -714,7 +716,7 @@ export default function Home() {
           )}
         </div>
 
-        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Your moms house, MI</footer>
+        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Troy, MI</footer>
       </main>
     </>
   );
