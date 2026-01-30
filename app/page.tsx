@@ -22,7 +22,7 @@ interface Game {
   awayTeam: { name: string; score: string; rank: string | number };
   status: string;
   clock: string;
-  date?: string; // YYYY-MM-DD
+  date?: string;
 }
 
 function LiveTicker() {
@@ -31,81 +31,130 @@ function LiveTicker() {
 
   const fetchScores = async () => {
     try {
-      const res = await fetch(
-        'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard'
-      );
-      if (!res.ok) throw new Error('Failed to fetch');
-      const data = await res.json();
+      setError(null);
 
-      const formatted: Game[] = (data.events || []).map((e: any) => {
-        const comp = e.competitions[0];
+      const today = new Date();
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+
+      const formatDate = (d: Date) => d.toISOString().split('T')[0].replace(/-/g, '');
+
+      const todayStr = formatDate(today);
+      const yesterdayStr = formatDate(yesterday);
+
+      // Fetch today
+      const todayRes = await fetch(
+        `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}`
+      );
+      let todayEvents = [];
+      if (todayRes.ok) {
+        const todayData = await todayRes.json();
+        todayEvents = todayData.events || [];
+      }
+
+      // Fetch yesterday
+      const yesterdayRes = await fetch(
+        `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}`
+      );
+      let yesterdayEvents = [];
+      if (yesterdayRes.ok) {
+        const yesterdayData = await yesterdayRes.json();
+        yesterdayEvents = yesterdayData.events || [];
+      }
+
+      const allEvents = [...yesterdayEvents, ...todayEvents];
+
+      const formatted: Game[] = allEvents.map((e: any) => {
+        const comp = e.competitions?.[0];
+        if (!comp) return null;
+
         const home = comp.competitors.find((c: any) => c.homeAway === 'home');
         const away = comp.competitors.find((c: any) => c.homeAway === 'away');
 
-        const homeScore = Number(home?.score) || 0;
-        const awayScore = Number(away?.score) || 0;
+        if (!home || !away) return null;
 
-        const startDate = comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '';
-
-        // Only show rank if it's a realistic number (1–50)
-        const homeRank = Number(home?.curatedRank?.current);
-        const awayRank = Number(away?.curatedRank?.current);
+        const homeRankNum = Number(home.curatedRank?.current);
+        const awayRankNum = Number(away.curatedRank?.current);
 
         return {
           gameId: e.id,
           homeTeam: {
-            name: home?.team.shortDisplayName || '',
-            score: home?.score || '—',
-            rank: isNaN(homeRank) || homeRank <= 0 || homeRank > 50 ? '' : homeRank,
+            name: home.team.shortDisplayName || home.team.displayName || '',
+            score: home.score || '—',
+            rank: !isNaN(homeRankNum) && homeRankNum >= 1 && homeRankNum <= 25 ? homeRankNum : '',
           },
           awayTeam: {
-            name: away?.team.shortDisplayName || '',
-            score: away?.score || '—',
-            rank: isNaN(awayRank) || awayRank <= 0 || awayRank > 50 ? '' : awayRank,
+            name: away.team.shortDisplayName || away.team.displayName || '',
+            score: away.score || '—',
+            rank: !isNaN(awayRankNum) && awayRankNum >= 1 && awayRankNum <= 25 ? awayRankNum : '',
           },
-          status: comp.status.type.description || 'Unknown',
+          status: comp.status.type.description || 'Scheduled',
           clock: comp.status.displayClock || '',
-          date: startDate,
+          date: comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
         };
-      }).filter((g: Game) => g.homeTeam.name && g.awayTeam.name);
+      }).filter(Boolean) as Game[];
 
       setGames(formatted);
-      setError(null);
     } catch (err) {
-      console.error(err);
+      console.error('Ticker fetch error:', err);
       setError('Live scores unavailable');
     }
   };
 
   useEffect(() => {
     fetchScores();
-    const interval = setInterval(fetchScores, 45000);
+    const interval = setInterval(fetchScores, 60000);
     return () => clearInterval(interval);
   }, []);
 
-  if (error) return <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">{error}</div>;
-  if (games.length === 0) return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No games scheduled/live right now</div>;
+  if (error) {
+    return (
+      <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">
+        {error}
+      </div>
+    );
+  }
+
+  if (games.length === 0) {
+    return (
+      <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">
+        No games scheduled/live right now
+      </div>
+    );
+  }
+
+  const todayStr = new Date().toLocaleDateString('en-CA');
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-[#2A6A5E] text-white py-3 px-4 overflow-hidden whitespace-nowrap shadow-lg">
-      <div className="inline-flex animate-marquee gap-16">
+      <div className="inline-flex animate-marquee gap-20">
         {games.concat(games).map((game, i) => {
-          const isFinal = game.status.toLowerCase().includes('final') || 
-                         game.status.toLowerCase().includes('ended');
+          const isYesterday = game.date && game.date < todayStr;
+          const isFinal = game.status.toLowerCase().includes('final') || game.status.toLowerCase().includes('ended');
 
-          // Only show clock if game is NOT final and clock is meaningful
-          const showClock = !isFinal && game.clock && game.clock !== '0:00' && game.clock !== '';
+          let displayStatus = game.status;
+          let displayClock = '';
+
+          if (isYesterday) {
+            displayStatus = 'Final';
+          } else if (isFinal) {
+            displayClock = '';
+          } else if (game.clock && game.clock.trim() !== '' && game.clock !== '0:00') {
+            displayClock = ` (${game.clock})`;
+          }
+
+          const awayScore = game.awayTeam.score !== '—' ? ` ${game.awayTeam.score}` : '';
+          const homeScore = game.homeTeam.score !== '—' ? ` ${game.homeTeam.score}` : '';
 
           return (
             <span key={i} className="font-medium">
-              {game.awayTeam.rank && `#${game.awayTeam.rank} `}
-              {game.awayTeam.name} {game.awayTeam.score} @
-              {game.homeTeam.rank && `#${game.homeTeam.rank} `}
-              {game.homeTeam.name} {game.homeTeam.score}
+              {game.awayTeam.rank ? `#${game.awayTeam.rank} ` : ''}
+              {game.awayTeam.name}{awayScore} @
+              {game.homeTeam.rank ? `#${game.homeTeam.rank} ` : ''}
+              {game.homeTeam.name}{homeScore}
               {' '}
               <span className="text-yellow-300 font-semibold">
-                {game.status}
-                {showClock && ` (${game.clock})`}
+                {displayStatus}{displayClock}
               </span>
             </span>
           );
@@ -115,7 +164,6 @@ function LiveTicker() {
   );
 }
 
-// Friday + Saturday
 const testDays = [
   { day: 1, label: 'Fri Jan 30', date: '2026-01-30', noonET: '2026-01-30T12:00:00-05:00' },
   { day: 2, label: 'Sat Jan 31', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
@@ -153,7 +201,7 @@ export default function Home() {
   const [scoreboard, setScoreboard] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [forceRevealed, setForceRevealed] = useState(false);
-  const [currentDay, setCurrentDay] = useState(1); // Friday
+  const [currentDay, setCurrentDay] = useState(1);
   const [nameLocked, setNameLocked] = useState(false);
   const [usedTeams, setUsedTeams] = useState<string[]>([]);
   const [hasSubmitted, setHasSubmitted] = useState(false);
@@ -195,26 +243,21 @@ export default function Home() {
     setHasSubmitted(false);
   }, [currentShortName]);
 
-  // Fetch scheduled games from ESPN using date filter
   useEffect(() => {
     const fetchScores = async () => {
       try {
-        // Friday
         const fridayRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260130');
         const fridayData = await fridayRes.json();
 
-        // Saturday
         const satRes = await fetch('https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=20260131');
         const satData = await satRes.json();
 
         const allEvents = [...(fridayData.events || []), ...(satData.events || [])];
 
-        const formatted: Game[] = allEvents.map((e: any) => {
+        const formatted = allEvents.map((e: any) => {
           const comp = e.competitions[0];
           const home = comp.competitors.find((c: any) => c.homeAway === 'home');
           const away = comp.competitors.find((c: any) => c.homeAway === 'away');
-
-          const startDate = comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '';
 
           return {
             gameId: e.id,
@@ -222,7 +265,7 @@ export default function Home() {
             awayTeam: { name: away?.team.shortDisplayName || '', score: away?.score || '—', rank: away?.curatedRank?.current || '' },
             status: comp.status.type.description || 'Scheduled',
             clock: comp.status.displayClock || '',
-            date: startDate,
+            date: comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
           };
         }).filter((g: Game) => g.homeTeam.name && g.awayTeam.name);
 
@@ -233,7 +276,7 @@ export default function Home() {
     };
 
     fetchScores();
-    const i = setInterval(fetchScores, 60000);
+    const i = setInterval(fetchScores, 90000);
     return () => clearInterval(i);
   }, []);
 
@@ -458,7 +501,7 @@ export default function Home() {
           100% { transform: translateX(-50%); }
         }
         .animate-marquee {
-          animation: marquee 65s linear infinite;
+          animation: marquee 70s linear infinite;
         }
       `}</style>
 
