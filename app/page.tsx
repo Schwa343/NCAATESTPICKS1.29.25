@@ -26,6 +26,17 @@ interface Game {
   startTime?: string;
 }
 
+interface Pick {
+  id?: string;
+  name?: string;
+  team: string;
+  round: string;
+  timestamp?: any;
+  createdAt?: string;
+  status?: string;
+  eliminatedAt?: any;
+}
+
 function formatESTTime(isoString?: string): string {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -300,7 +311,9 @@ export default function Home() {
             const data = await todayRes.json();
             allEvents = [...allEvents, ...(data.events || [])];
           }
-        } catch {}
+        } catch (err) {
+          console.warn('Today fetch failed:', err);
+        }
 
         // Tomorrow
         try {
@@ -311,7 +324,9 @@ export default function Home() {
             const data = await tomorrowRes.json();
             allEvents = [...allEvents, ...(data.events || [])];
           }
-        } catch {}
+        } catch (err) {
+          console.warn('Tomorrow fetch failed:', err);
+        }
 
         const formatted = allEvents.map((e: any) => {
           const comp = e.competitions[0];
@@ -344,16 +359,16 @@ export default function Home() {
     const unsubscribe = onSnapshot(q, (snap) => {
       const all = snap.docs.map((doc) => ({
         id: doc.id,
-        ...(doc.data() as any),
+        ...(doc.data() as Pick),
       }));
-      const grouped = new Map<string, any[]>();
+      const grouped = new Map<string, Pick[]>();
       all.forEach((pick) => {
-        if (!grouped.has(pick.name)) grouped.set(pick.name, []);
-        grouped.get(pick.name)!.push(pick);
+        if (!grouped.has(pick.name || '')) grouped.set(pick.name || '', []);
+        grouped.get(pick.name || '')!.push(pick);
       });
       const formatted = Array.from(grouped.entries()).map(([name, picks]) => ({
         name,
-        picks: picks.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+        picks: picks.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()),
         status: picks.some((p) => p.status === 'eliminated') ? 'eliminated' : 'alive',
       }));
       setUserPicks(formatted);
@@ -371,7 +386,9 @@ export default function Home() {
     if (scoreboard.length === 0 || userPicks.length === 0) return;
 
     userPicks.forEach(async (user) => {
-      const alivePicks = user.picks.filter(p => !p.status || p.status !== 'eliminated');
+      const alivePicks = user.picks.filter(
+        (p: Pick) => !p.status || p.status !== 'eliminated'
+      );
 
       for (const pick of alivePicks) {
         const dayNum = parseInt(pick.round.replace('Day ', ''));
@@ -425,7 +442,7 @@ export default function Home() {
     const user = userPicks.find(u => u.name === currentShortName);
     if (user) {
       setNameLocked(true);
-      setUsedTeams(user.picks.map((p: any) => p.team).filter(Boolean));
+      setUsedTeams(user.picks.map((p: Pick) => p.team).filter(Boolean));
     }
   }, [currentShortName, userPicks]);
 
@@ -443,40 +460,6 @@ export default function Home() {
     if (!dayInfo) return [];
     const gamesForDay = scoreboard.filter(g => g.date === dayInfo.date);
     return [...new Set(gamesForDay.flatMap(g => [g.homeTeam.name, g.awayTeam.name]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  };
-
-  const isDeadForDay = (userPicks: any[], dayRound: string) => {
-    const pick = userPicks.find(p => p.round === dayRound)?.team;
-    if (!pick) return false;
-
-    const game = scoreboard.find(g => 
-      g.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(pick.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-      g.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(pick.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-      pick.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(g.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-      pick.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(g.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, ''))
-    );
-
-    if (!game) return false;
-
-    const statusLower = game.status.toLowerCase();
-    const isFinal = statusLower.includes('final') || statusLower.includes('ended') || statusLower.includes('complete');
-
-    if (!isFinal) return false;
-
-    const homeScore = Number(game.homeTeam.score) || 0;
-    const awayScore = Number(game.awayTeam.score) || 0;
-
-    const pickedClean = pick.toLowerCase().replace(/[^a-z0-9]/gi, '');
-    const homeClean = game.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '');
-    const awayClean = game.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '');
-
-    const isHome = homeClean.includes(pickedClean) || pickedClean.includes(homeClean);
-    const isAway = awayClean.includes(pickedClean) || pickedClean.includes(awayClean);
-
-    if (isHome) return homeScore < awayScore;
-    if (isAway) return awayScore < homeScore;
-
-    return false;
   };
 
   const handleSubmit = async () => {
@@ -598,11 +581,11 @@ export default function Home() {
     return 'bg-gray-100 text-gray-800';
   };
 
-  const getPickForDay = (picks: any[], round: string) => {
+  const getPickForDay = (picks: Pick[], round: string) => {
     return picks.find(p => p.round === round)?.team || '—';
   };
 
-  const getDisplayPick = (picks: any[], round: string, dayInfo: typeof testDays[0]) => {
+  const getDisplayPick = (picks: Pick[], round: string, dayInfo: typeof testDays[0]) => {
     const pick = getPickForDay(picks, round);
     if (pick && pick !== '—') return pick;
 
@@ -621,8 +604,8 @@ export default function Home() {
   const displayedParticipants = participantNames.map(full => {
     const short = getShortName(full);
     const userData = userPicks.find(u => u.name === short) || { picks: [], status: 'alive' };
-    return { fullName: full, shortName: short, picks: userData.picks, status: userData.status };
-  }).sort((a,b) => {
+    return { fullName: full, shortName: short, picks: userData.picks as Pick[], status: userData.status };
+  }).sort((a, b) => {
     if (a.shortName === currentShortName) return -1;
     if (b.shortName === currentShortName) return 1;
     if (a.status === 'alive' && b.status !== 'alive') return -1;
@@ -838,7 +821,7 @@ export default function Home() {
 
                                   const userPicksArray = entry.picks || [];
                                   const alreadyPicked = userPicksArray.some(
-                                    (p: { team: string; round: string }) => p.team === newTeam && p.round !== dayRound
+                                    (p: Pick) => p.team === newTeam && p.round !== dayRound
                                   );
                                   if (alreadyPicked) {
                                     alert(`This person already picked ${newTeam} on another day.`);
