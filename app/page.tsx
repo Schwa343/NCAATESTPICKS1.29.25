@@ -302,7 +302,6 @@ export default function Home() {
 
         let allEvents: any[] = [];
 
-        // Today
         try {
           const todayRes = await fetch(
             `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}`
@@ -311,11 +310,8 @@ export default function Home() {
             const data = await todayRes.json();
             allEvents = [...allEvents, ...(data.events || [])];
           }
-        } catch (err) {
-          console.warn('Today fetch failed:', err);
-        }
+        } catch {}
 
-        // Tomorrow
         try {
           const tomorrowRes = await fetch(
             `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${tomorrowStr}`
@@ -324,9 +320,7 @@ export default function Home() {
             const data = await tomorrowRes.json();
             allEvents = [...allEvents, ...(data.events || [])];
           }
-        } catch (err) {
-          console.warn('Tomorrow fetch failed:', err);
-        }
+        } catch {}
 
         const formatted = allEvents.map((e: any) => {
           const comp = e.competitions[0];
@@ -381,7 +375,7 @@ export default function Home() {
     return () => unsubscribe();
   }, []);
 
-  // Auto-eliminate when picked team loses a finalized game
+  // Auto-eliminate + color update when game finalizes
   useEffect(() => {
     if (scoreboard.length === 0 || userPicks.length === 0) return;
 
@@ -415,9 +409,10 @@ export default function Home() {
         const isHome = game.homeTeam.name.toLowerCase().includes(pickedTeamLower);
         const isAway = game.awayTeam.name.toLowerCase().includes(pickedTeamLower);
 
+        const won = (isHome && homeScore > awayScore) || (isAway && awayScore > homeScore);
         const lost = (isHome && homeScore < awayScore) || (isAway && awayScore < homeScore);
 
-        if (lost) {
+        if (won || lost) {
           try {
             const ref = collection(db, 'picks');
             const q = query(ref, where('name', '==', user.name), where('round', '==', pick.round));
@@ -425,12 +420,12 @@ export default function Home() {
 
             if (!existing.empty) {
               await updateDoc(doc(db, 'picks', existing.docs[0].id), {
-                status: 'eliminated',
-                eliminatedAt: serverTimestamp(),
+                status: lost ? 'eliminated' : 'won',
+                resultAt: serverTimestamp(),
               });
             }
           } catch (err) {
-            console.error('Failed to mark eliminated:', err);
+            console.error('Failed to update pick result:', err);
           }
         }
       }
@@ -567,14 +562,14 @@ export default function Home() {
     const isAway = awayClean.includes(pickedClean) || pickedClean.includes(awayClean);
 
     if (isHome) {
-      if (homeScore > awayScore) return 'bg-green-100 text-green-800';
-      if (homeScore < awayScore) return 'bg-red-100 text-red-800';
+      if (homeScore > awayScore) return 'bg-green-100 text-green-800'; // WIN
+      if (homeScore < awayScore) return 'bg-red-100 text-red-800';   // LOSS
       return 'bg-yellow-100 text-yellow-800';
     }
 
     if (isAway) {
-      if (awayScore > homeScore) return 'bg-green-100 text-green-800';
-      if (awayScore < homeScore) return 'bg-red-100 text-red-800';
+      if (awayScore > homeScore) return 'bg-green-100 text-green-800'; // WIN
+      if (awayScore < homeScore) return 'bg-red-100 text-red-800';   // LOSS
       return 'bg-yellow-100 text-yellow-800';
     }
 
@@ -795,7 +790,42 @@ export default function Home() {
                         const dayRound = `Day ${d.day}`;
                         const dayPassedNoon = new Date(d.noonET) <= new Date();
                         const cellVisible = visible || dayPassedNoon || isAdmin;
-                        const displayPick = getDisplayPick(entry.picks, dayRound, d);
+
+                        const pick = entry.picks.find(p => p.round === dayRound);
+                        let displayPick: string | JSX.Element = '—';
+                        let pickClass = '';
+
+                        if (pick && pick.team) {
+                          const game = scoreboard.find(g =>
+                            g.date === testDays.find(td => td.day === parseInt(dayRound.replace('Day ', '')))?.date &&
+                            (g.homeTeam.name.toLowerCase().includes(pick.team.toLowerCase()) ||
+                             g.awayTeam.name.toLowerCase().includes(pick.team.toLowerCase()))
+                          );
+
+                          if (game) {
+                            const statusLower = game.status.toLowerCase();
+                            const isFinal = statusLower.includes('final') || statusLower.includes('ended') || statusLower.includes('complete');
+
+                            if (isFinal) {
+                              const homeScore = Number(game.homeTeam.score) || 0;
+                              const awayScore = Number(game.awayTeam.score) || 0;
+
+                              const isHome = game.homeTeam.name.toLowerCase().includes(pick.team.toLowerCase());
+                              const won = isHome ? homeScore > awayScore : awayScore > homeScore;
+
+                              pickClass = won ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
+                              displayPick = pick.team;
+                            } else {
+                              displayPick = pick.team;
+                              pickClass = 'text-yellow-600';
+                            }
+                          } else {
+                            displayPick = pick.team;
+                          }
+                        } else if (dayPassedNoon) {
+                          displayPick = <span className="text-red-600 font-bold">SHAME</span>;
+                        }
+
                         const isEditingThisCell = isAdmin && editingCell?.name === entry.shortName && editingCell?.round === dayRound;
 
                         return (
@@ -869,7 +899,7 @@ export default function Home() {
                                 ))}
                               </select>
                             ) : (
-                              cellVisible ? displayPick : '███'
+                              <span className={pickClass}>{displayPick}</span>
                             )}
                           </td>
                         );
