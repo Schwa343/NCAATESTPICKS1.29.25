@@ -37,6 +37,18 @@ interface Pick {
   eliminatedAt?: any;
 }
 
+function normalizeTeamName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/state/gi, 'st')
+    .replace(/ohio/gi, 'oh')
+    .replace(/northern/gi, 'n')
+    .replace(/southern/gi, 's')
+    .replace(/miami/gi, 'miami')
+    .replace(/miami oh/gi, 'miamioh');
+}
+
 function formatESTTime(isoString?: string): string {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -118,13 +130,11 @@ function LiveTicker() {
         };
       }).filter(Boolean) as Game[];
 
-      // Exclude completed games for ticker
       const notCompleted = formatted.filter((g) => {
         const desc = g.status.toLowerCase();
         return !desc.includes('final') && !desc.includes('end') && !desc.includes('complete') && !desc.includes('over') && !desc.includes('post');
       });
 
-      // Only ranked games for ticker
       const rankedOnly = notCompleted.filter((g) => {
         const homeRank = g.homeTeam.rank;
         const awayRank = g.awayTeam.rank;
@@ -207,8 +217,10 @@ function LiveTicker() {
 }
 
 const testDays = [
-  { day: 1, label: 'Sat Jan 31', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
-  { day: 2, label: 'Sun Feb 1', date: '2026-02-01', noonET: '2026-02-01T12:00:00-05:00' },
+  { day: 1, label: 'Sun Feb 1', date: '2026-02-01', noonET: '2026-02-01T12:00:00-05:00' },
+  { day: 2, label: 'Mon Feb 2', date: '2026-02-02', noonET: '2026-02-02T12:00:00-05:00' },
+  { day: 3, label: 'Tue Feb 3', date: '2026-02-03', noonET: '2026-02-03T12:00:00-05:00' },
+  { day: 4, label: 'Wed Feb 4', date: '2026-02-04', noonET: '2026-02-04T12:00:00-05:00' },
 ];
 
 const averageDaysSurvived: Record<string, number> = {
@@ -388,15 +400,24 @@ export default function Home() {
         const dayInfo = testDays.find(d => d.day === dayNum);
         if (!dayInfo) continue;
 
-        const game = scoreboard.find(g =>
-          g.date === dayInfo.date &&
-          (g.homeTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
-           g.awayTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
-           pick.team.toLowerCase().trim().includes(g.homeTeam.name.toLowerCase().trim()) ||
-           pick.team.toLowerCase().trim().includes(g.awayTeam.name.toLowerCase().trim()))
-        );
+        const normalizedPick = normalizeTeamName(pick.team);
 
-        if (!game) continue;
+        const game = scoreboard.find(g => {
+          if (g.date !== dayInfo.date) return false;
+
+          const homeNorm = normalizeTeamName(g.homeTeam.name);
+          const awayNorm = normalizeTeamName(g.awayTeam.name);
+
+          return homeNorm.includes(normalizedPick) ||
+                 awayNorm.includes(normalizedPick) ||
+                 normalizedPick.includes(homeNorm) ||
+                 normalizedPick.includes(awayNorm);
+        });
+
+        if (!game) {
+          console.log(`No game found for ${user.name}'s pick: ${pick.team} on ${pick.round}`);
+          continue;
+        }
 
         const statusLower = game.status.toLowerCase();
         const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
@@ -406,17 +427,22 @@ export default function Home() {
         const homeScoreStr = game.homeTeam.score;
         const awayScoreStr = game.awayTeam.score;
 
-        if (homeScoreStr === '—' || awayScoreStr === '—') continue;
+        if (homeScoreStr === '—' || awayScoreStr === '—' || !homeScoreStr || !awayScoreStr) {
+          console.log(`Scores missing for game ${game.homeTeam.name} vs ${game.awayTeam.name} on ${game.date}`);
+          continue;
+        }
 
         const homeScore = Number(homeScoreStr);
         const awayScore = Number(awayScoreStr);
 
-        const pickedTeamLower = pick.team.toLowerCase().trim();
-        const homeNameLower = game.homeTeam.name.toLowerCase().trim();
-        const awayNameLower = game.awayTeam.name.toLowerCase().trim();
+        if (isNaN(homeScore) || isNaN(awayScore)) continue;
 
-        const isHome = homeNameLower.includes(pickedTeamLower) || pickedTeamLower.includes(homeNameLower);
-        const isAway = awayNameLower.includes(pickedTeamLower) || pickedTeamLower.includes(awayNameLower);
+        const normalizedPickTeam = normalizeTeamName(pick.team);
+        const homeNorm = normalizeTeamName(game.homeTeam.name);
+        const awayNorm = normalizeTeamName(game.awayTeam.name);
+
+        const isHome = homeNorm.includes(normalizedPickTeam) || normalizedPickTeam.includes(homeNorm);
+        const isAway = awayNorm.includes(normalizedPickTeam) || normalizedPickTeam.includes(awayNorm);
 
         const won = (isHome && homeScore > awayScore) || (isAway && awayScore > homeScore);
         const lost = (isHome && homeScore < awayScore) || (isAway && awayScore < homeScore);
@@ -551,13 +577,19 @@ export default function Home() {
     const dayInfo = testDays.find(d => `Day ${d.day}` === round);
     if (!dayInfo) return 'bg-gray-100 text-gray-800';
 
-    const game = scoreboard.find(g => 
-      g.date === dayInfo.date &&
-      (g.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(team.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-       g.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(team.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-       team.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(g.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-       team.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(g.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '')))
-    );
+    const normalizedTeam = normalizeTeamName(team);
+
+    const game = scoreboard.find(g => {
+      if (g.date !== dayInfo.date) return false;
+
+      const homeNorm = normalizeTeamName(g.homeTeam.name);
+      const awayNorm = normalizeTeamName(g.awayTeam.name);
+
+      return homeNorm.includes(normalizedTeam) ||
+             awayNorm.includes(normalizedTeam) ||
+             normalizedTeam.includes(homeNorm) ||
+             normalizedTeam.includes(awayNorm);
+    });
 
     if (!game) return 'bg-gray-100 text-gray-800';
 
@@ -577,14 +609,14 @@ export default function Home() {
     const isAway = awayClean.includes(pickedClean) || pickedClean.includes(awayClean);
 
     if (isHome) {
-      if (homeScore > awayScore) return 'bg-green-100 text-green-800';   // WIN
-      if (homeScore < awayScore) return 'bg-red-100 text-red-800';      // LOSS
-      return 'bg-yellow-100 text-yellow-800';                           // Tie
+      if (homeScore > awayScore) return 'bg-green-100 text-green-800';
+      if (homeScore < awayScore) return 'bg-red-100 text-red-800';
+      return 'bg-yellow-100 text-yellow-800';
     }
 
     if (isAway) {
-      if (awayScore > homeScore) return 'bg-green-100 text-green-800';  // WIN
-      if (awayScore < homeScore) return 'bg-red-100 text-red-800';      // LOSS
+      if (awayScore > homeScore) return 'bg-green-100 text-green-800';
+      if (awayScore < homeScore) return 'bg-red-100 text-red-800';
       return 'bg-yellow-100 text-yellow-800';
     }
 
@@ -615,7 +647,7 @@ export default function Home() {
     const short = getShortName(full);
     const userData = userPicks.find(u => u.name === short) || { picks: [], status: 'alive' };
     return { fullName: full, shortName: short, picks: userData.picks as Pick[], status: userData.status };
-  }).sort((a, b) => {
+  }).sort((a,b) => {
     if (a.shortName === currentShortName) return -1;
     if (b.shortName === currentShortName) return 1;
     if (a.status === 'alive' && b.status !== 'alive') return -1;
@@ -813,10 +845,10 @@ export default function Home() {
                         if (pick && pick.team) {
                           const game = scoreboard.find(g =>
                             g.date === testDays.find(td => `Day ${td.day}` === dayRound)?.date &&
-                            (g.homeTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
-                             g.awayTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
-                             pick.team.toLowerCase().trim().includes(g.homeTeam.name.toLowerCase().trim()) ||
-                             pick.team.toLowerCase().trim().includes(g.awayTeam.name.toLowerCase().trim()))
+                            (normalizeTeamName(g.homeTeam.name).includes(normalizeTeamName(pick.team)) ||
+                             normalizeTeamName(g.awayTeam.name).includes(normalizeTeamName(pick.team)) ||
+                             normalizeTeamName(pick.team).includes(normalizeTeamName(g.homeTeam.name)) ||
+                             normalizeTeamName(pick.team).includes(normalizeTeamName(g.awayTeam.name)))
                           );
 
                           if (game) {
@@ -831,12 +863,20 @@ export default function Home() {
                                 const homeScore = Number(homeScoreStr);
                                 const awayScore = Number(awayScoreStr);
 
-                                const isHome = game.homeTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
-                                               pick.team.toLowerCase().trim().includes(game.homeTeam.name.toLowerCase().trim());
-                                const won = isHome ? homeScore > awayScore : awayScore > homeScore;
+                                if (!isNaN(homeScore) && !isNaN(awayScore)) {
+                                  const normalizedPick = normalizeTeamName(pick.team);
+                                  const homeNorm = normalizeTeamName(game.homeTeam.name);
+                                  const awayNorm = normalizeTeamName(game.awayTeam.name);
 
-                                pickClass = won ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
-                                displayPick = pick.team;
+                                  const isHome = homeNorm.includes(normalizedPick) || normalizedPick.includes(homeNorm);
+                                  const won = isHome ? homeScore > awayScore : awayScore > homeScore;
+
+                                  pickClass = won ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
+                                  displayPick = pick.team;
+                                } else {
+                                  displayPick = pick.team;
+                                  pickClass = 'text-gray-600';
+                                }
                               } else {
                                 displayPick = pick.team;
                                 pickClass = 'text-gray-600';
