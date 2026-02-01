@@ -121,8 +121,7 @@ function LiveTicker() {
       // Exclude completed games for ticker
       const notCompleted = formatted.filter((g) => {
         const desc = g.status.toLowerCase();
-        const isCompleted = desc.includes('final') || desc.includes('end') || desc.includes('complete') || desc.includes('over') || desc.includes('post');
-        return !isCompleted;
+        return !desc.includes('final') && !desc.includes('end') && !desc.includes('complete') && !desc.includes('over') && !desc.includes('post');
       });
 
       // Only ranked games for ticker
@@ -208,8 +207,8 @@ function LiveTicker() {
 }
 
 const testDays = [
-  { day: 1, label: 'Today (Sat Jan 31)', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
-  { day: 2, label: 'Tomorrow (Sun Feb 1)', date: '2026-02-01', noonET: '2026-02-01T12:00:00-05:00' },
+  { day: 1, label: 'Sat Jan 31', date: '2026-01-31', noonET: '2026-01-31T12:00:00-05:00' },
+  { day: 2, label: 'Sun Feb 1', date: '2026-02-01', noonET: '2026-02-01T12:00:00-05:00' },
 ];
 
 const averageDaysSurvived: Record<string, number> = {
@@ -375,7 +374,7 @@ export default function Home() {
     return () => unsubscribe();
   }, []);
 
-  // Auto-eliminate + color update when game finalizes
+  // Auto-eliminate + result marking when game finalizes
   useEffect(() => {
     if (scoreboard.length === 0 || userPicks.length === 0) return;
 
@@ -391,23 +390,33 @@ export default function Home() {
 
         const game = scoreboard.find(g =>
           g.date === dayInfo.date &&
-          (g.homeTeam.name.toLowerCase().includes(pick.team.toLowerCase()) ||
-           g.awayTeam.name.toLowerCase().includes(pick.team.toLowerCase()))
+          (g.homeTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
+           g.awayTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
+           pick.team.toLowerCase().trim().includes(g.homeTeam.name.toLowerCase().trim()) ||
+           pick.team.toLowerCase().trim().includes(g.awayTeam.name.toLowerCase().trim()))
         );
 
         if (!game) continue;
 
         const statusLower = game.status.toLowerCase();
-        const isFinal = statusLower.includes('final') || statusLower.includes('ended') || statusLower.includes('complete');
+        const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
 
         if (!isFinal) continue;
 
-        const homeScore = Number(game.homeTeam.score) || 0;
-        const awayScore = Number(game.awayTeam.score) || 0;
+        const homeScoreStr = game.homeTeam.score;
+        const awayScoreStr = game.awayTeam.score;
 
-        const pickedTeamLower = pick.team.toLowerCase();
-        const isHome = game.homeTeam.name.toLowerCase().includes(pickedTeamLower);
-        const isAway = game.awayTeam.name.toLowerCase().includes(pickedTeamLower);
+        if (homeScoreStr === '—' || awayScoreStr === '—') continue;
+
+        const homeScore = Number(homeScoreStr);
+        const awayScore = Number(awayScoreStr);
+
+        const pickedTeamLower = pick.team.toLowerCase().trim();
+        const homeNameLower = game.homeTeam.name.toLowerCase().trim();
+        const awayNameLower = game.awayTeam.name.toLowerCase().trim();
+
+        const isHome = homeNameLower.includes(pickedTeamLower) || pickedTeamLower.includes(homeNameLower);
+        const isAway = awayNameLower.includes(pickedTeamLower) || pickedTeamLower.includes(awayNameLower);
 
         const won = (isHome && homeScore > awayScore) || (isAway && awayScore > homeScore);
         const lost = (isHome && homeScore < awayScore) || (isAway && awayScore < homeScore);
@@ -419,10 +428,12 @@ export default function Home() {
             const existing = await getDocs(q);
 
             if (!existing.empty) {
-              await updateDoc(doc(db, 'picks', existing.docs[0].id), {
+              const docRef = doc(db, 'picks', existing.docs[0].id);
+              await updateDoc(docRef, {
                 status: lost ? 'eliminated' : 'won',
                 resultAt: serverTimestamp(),
               });
+              console.log(`${user.name} on ${pick.round}: ${pick.team} → ${won ? 'WON' : 'LOST'}`);
             }
           } catch (err) {
             console.error('Failed to update pick result:', err);
@@ -534,20 +545,24 @@ export default function Home() {
     }
   };
 
-  const getPickColor = (team: string) => {
+  const getPickColor = (team: string, round: string) => {
     if (!team || team === '—') return 'bg-gray-100 text-gray-800';
 
+    const dayInfo = testDays.find(d => `Day ${d.day}` === round);
+    if (!dayInfo) return 'bg-gray-100 text-gray-800';
+
     const game = scoreboard.find(g => 
-      g.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(team.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-      g.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(team.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-      team.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(g.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
-      team.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(g.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, ''))
+      g.date === dayInfo.date &&
+      (g.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(team.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
+       g.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(team.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
+       team.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(g.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '')) ||
+       team.toLowerCase().replace(/[^a-z0-9]/gi, '').includes(g.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '')))
     );
 
     if (!game) return 'bg-gray-100 text-gray-800';
 
     const statusLower = game.status.toLowerCase();
-    const isFinal = statusLower.includes('final') || statusLower.includes('ended') || statusLower.includes('complete');
+    const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
 
     if (!isFinal) return 'bg-yellow-100 text-yellow-800';
 
@@ -562,14 +577,14 @@ export default function Home() {
     const isAway = awayClean.includes(pickedClean) || pickedClean.includes(awayClean);
 
     if (isHome) {
-      if (homeScore > awayScore) return 'bg-green-100 text-green-800'; // WIN
-      if (homeScore < awayScore) return 'bg-red-100 text-red-800';   // LOSS
-      return 'bg-yellow-100 text-yellow-800';
+      if (homeScore > awayScore) return 'bg-green-100 text-green-800';   // WIN
+      if (homeScore < awayScore) return 'bg-red-100 text-red-800';      // LOSS
+      return 'bg-yellow-100 text-yellow-800';                           // Tie
     }
 
     if (isAway) {
-      if (awayScore > homeScore) return 'bg-green-100 text-green-800'; // WIN
-      if (awayScore < homeScore) return 'bg-red-100 text-red-800';   // LOSS
+      if (awayScore > homeScore) return 'bg-green-100 text-green-800';  // WIN
+      if (awayScore < homeScore) return 'bg-red-100 text-red-800';      // LOSS
       return 'bg-yellow-100 text-yellow-800';
     }
 
@@ -797,30 +812,42 @@ export default function Home() {
 
                         if (pick && pick.team) {
                           const game = scoreboard.find(g =>
-                            g.date === testDays.find(td => td.day === parseInt(dayRound.replace('Day ', '')))?.date &&
-                            (g.homeTeam.name.toLowerCase().includes(pick.team.toLowerCase()) ||
-                             g.awayTeam.name.toLowerCase().includes(pick.team.toLowerCase()))
+                            g.date === testDays.find(td => `Day ${td.day}` === dayRound)?.date &&
+                            (g.homeTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
+                             g.awayTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
+                             pick.team.toLowerCase().trim().includes(g.homeTeam.name.toLowerCase().trim()) ||
+                             pick.team.toLowerCase().trim().includes(g.awayTeam.name.toLowerCase().trim()))
                           );
 
                           if (game) {
                             const statusLower = game.status.toLowerCase();
-                            const isFinal = statusLower.includes('final') || statusLower.includes('ended') || statusLower.includes('complete');
+                            const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
 
                             if (isFinal) {
-                              const homeScore = Number(game.homeTeam.score) || 0;
-                              const awayScore = Number(game.awayTeam.score) || 0;
+                              const homeScoreStr = game.homeTeam.score;
+                              const awayScoreStr = game.awayTeam.score;
 
-                              const isHome = game.homeTeam.name.toLowerCase().includes(pick.team.toLowerCase());
-                              const won = isHome ? homeScore > awayScore : awayScore > homeScore;
+                              if (homeScoreStr !== '—' && awayScoreStr !== '—') {
+                                const homeScore = Number(homeScoreStr);
+                                const awayScore = Number(awayScoreStr);
 
-                              pickClass = won ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
-                              displayPick = pick.team;
+                                const isHome = game.homeTeam.name.toLowerCase().trim().includes(pick.team.toLowerCase().trim()) ||
+                                               pick.team.toLowerCase().trim().includes(game.homeTeam.name.toLowerCase().trim());
+                                const won = isHome ? homeScore > awayScore : awayScore > homeScore;
+
+                                pickClass = won ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
+                                displayPick = pick.team;
+                              } else {
+                                displayPick = pick.team;
+                                pickClass = 'text-gray-600';
+                              }
                             } else {
                               displayPick = pick.team;
                               pickClass = 'text-yellow-600';
                             }
                           } else {
                             displayPick = pick.team;
+                            pickClass = 'text-gray-600';
                           }
                         } else if (dayPassedNoon) {
                           displayPick = <span className="text-red-600 font-bold">SHAME</span>;
@@ -831,7 +858,7 @@ export default function Home() {
                         return (
                           <td
                             key={d.day}
-                            className={`py-4 px-5 text-center font-semibold cursor-pointer ${cellVisible ? getPickColor(getPickForDay(entry.picks, dayRound)) : 'bg-gray-200 text-transparent blur-sm select-none'} ${isDead ? 'line-through text-gray-500' : ''}`}
+                            className={`py-4 px-5 text-center font-semibold cursor-pointer ${cellVisible ? getPickColor(getPickForDay(entry.picks, dayRound), dayRound) : 'bg-gray-200 text-transparent blur-sm select-none'} ${isDead ? 'line-through text-gray-500' : ''}`}
                             onClick={() => {
                               if (isAdmin && !isEditingThisCell && cellVisible) {
                                 setEditingCell({ name: entry.shortName, round: dayRound });
