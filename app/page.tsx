@@ -217,11 +217,20 @@ function LiveTicker() {
 }
 
 const testDays = [
-  { day: 1, label: 'Sun Feb 1', date: '2026-02-01', noonET: '2026-02-01T12:00:00-05:00' },
-  { day: 2, label: 'Mon Feb 2', date: '2026-02-02', noonET: '2026-02-02T12:00:00-05:00' },
-  { day: 3, label: 'Tue Feb 3', date: '2026-02-03', noonET: '2026-02-03T12:00:00-05:00' },
-  { day: 4, label: 'Wed Feb 4', date: '2026-02-04', noonET: '2026-02-04T12:00:00-05:00' },
+  { day: 1, label: 'Mon Feb 2', date: '2026-02-02', noonET: '2026-02-02T12:00:00-05:00' },
+  { day: 2, label: 'Tue Feb 3', date: '2026-02-03', noonET: '2026-02-03T12:00:00-05:00' },
+  { day: 3, label: 'Wed Feb 4', date: '2026-02-04', noonET: '2026-02-04T12:00:00-05:00' },
 ];
+
+const isDayFinalized = (day: number) => {
+  const dayInfo = testDays.find(d => d.day === day);
+  if (!dayInfo) return false;
+
+  const cutoff = new Date(dayInfo.date);
+  cutoff.setHours(23, 55, 0, 0); // 11:55 PM ET
+
+  return new Date() > cutoff;
+};
 
 const averageDaysSurvived: Record<string, number> = {
   "Patrick Gifford": 4.4,
@@ -303,38 +312,31 @@ export default function Home() {
     const fetchScores = async () => {
       try {
         const today = new Date();
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
         const tomorrow = new Date(today);
         tomorrow.setDate(today.getDate() + 1);
 
         const formatDate = (d: Date) => d.toISOString().split('T')[0].replace(/-/g, '');
 
-        const todayStr = formatDate(today);
-        const tomorrowStr = formatDate(tomorrow);
+        const dates = [formatDate(yesterday), formatDate(today), formatDate(tomorrow)];
 
         let allEvents: any[] = [];
 
-        try {
-          const todayRes = await fetch(
-            `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}`
-          );
-          if (todayRes.ok) {
-            const data = await todayRes.json();
-            allEvents = [...allEvents, ...(data.events || [])];
-          }
-        } catch {}
-
-        try {
-          const tomorrowRes = await fetch(
-            `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${tomorrowStr}`
-          );
-          if (tomorrowRes.ok) {
-            const data = await tomorrowRes.json();
-            allEvents = [...allEvents, ...(data.events || [])];
-          }
-        } catch {}
+        for (const dateStr of dates) {
+          try {
+            const res = await fetch(
+              `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${dateStr}`
+            );
+            if (res.ok) {
+              const data = await res.json();
+              allEvents = [...allEvents, ...(data.events || [])];
+            }
+          } catch {}
+        }
 
         const formatted = allEvents.map((e: any) => {
-          const comp = e.competitions[0];
+          const comp = e.competitions?.[0];
           const home = comp?.competitors?.find((c: any) => c.homeAway === 'home');
           const away = comp?.competitors?.find((c: any) => c.homeAway === 'away');
 
@@ -386,7 +388,7 @@ export default function Home() {
     return () => unsubscribe();
   }, []);
 
-  // Auto-eliminate + result marking when game finalizes
+  // Auto-eliminate + result marking — skip finalized days
   useEffect(() => {
     if (scoreboard.length === 0 || userPicks.length === 0) return;
 
@@ -397,6 +399,8 @@ export default function Home() {
 
       for (const pick of alivePicks) {
         const dayNum = parseInt(pick.round.replace('Day ', ''));
+        if (isDayFinalized(dayNum)) continue; // Locked — don't recalculate
+
         const dayInfo = testDays.find(d => d.day === dayNum);
         if (!dayInfo) continue;
 
@@ -414,10 +418,7 @@ export default function Home() {
                  normalizedPick.includes(awayNorm);
         });
 
-        if (!game) {
-          console.log(`No game found for ${user.name}'s pick: ${pick.team} on ${pick.round}`);
-          continue;
-        }
+        if (!game) continue;
 
         const statusLower = game.status.toLowerCase();
         const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
@@ -427,10 +428,7 @@ export default function Home() {
         const homeScoreStr = game.homeTeam.score;
         const awayScoreStr = game.awayTeam.score;
 
-        if (homeScoreStr === '—' || awayScoreStr === '—' || !homeScoreStr || !awayScoreStr) {
-          console.log(`Scores missing for game ${game.homeTeam.name} vs ${game.awayTeam.name} on ${game.date}`);
-          continue;
-        }
+        if (homeScoreStr === '—' || awayScoreStr === '—' || !homeScoreStr || !awayScoreStr) continue;
 
         const homeScore = Number(homeScoreStr);
         const awayScore = Number(awayScoreStr);
@@ -459,7 +457,6 @@ export default function Home() {
                 status: lost ? 'eliminated' : 'won',
                 resultAt: serverTimestamp(),
               });
-              console.log(`${user.name} on ${pick.round}: ${pick.team} → ${won ? 'WON' : 'LOST'}`);
             }
           } catch (err) {
             console.error('Failed to update pick result:', err);
@@ -572,6 +569,16 @@ export default function Home() {
   };
 
   const getPickColor = (team: string, round: string) => {
+    const dayNum = parseInt(round.replace('Day ', ''));
+    const isFinalized = isDayFinalized(dayNum);
+
+    if (isFinalized) {
+      // Day is locked — use stored result only
+      // In practice, you'd read from pick.status if available
+      // For now fallback to gray; add stored status check if needed
+      return 'bg-gray-100 text-gray-800';
+    }
+
     if (!team || team === '—') return 'bg-gray-100 text-gray-800';
 
     const dayInfo = testDays.find(d => `Day ${d.day}` === round);
@@ -836,6 +843,7 @@ export default function Home() {
                       {testDays.map(d => {
                         const dayRound = `Day ${d.day}`;
                         const dayPassedNoon = new Date(d.noonET) <= new Date();
+                        const dayFinalized = isDayFinalized(d.day);
                         const cellVisible = visible || dayPassedNoon || isAdmin;
 
                         const pick = entry.picks.find(p => p.round === dayRound);
@@ -843,51 +851,60 @@ export default function Home() {
                         let pickClass = '';
 
                         if (pick && pick.team) {
-                          const game = scoreboard.find(g =>
-                            g.date === testDays.find(td => `Day ${td.day}` === dayRound)?.date &&
-                            (normalizeTeamName(g.homeTeam.name).includes(normalizeTeamName(pick.team)) ||
-                             normalizeTeamName(g.awayTeam.name).includes(normalizeTeamName(pick.team)) ||
-                             normalizeTeamName(pick.team).includes(normalizeTeamName(g.homeTeam.name)) ||
-                             normalizeTeamName(pick.team).includes(normalizeTeamName(g.awayTeam.name)))
-                          );
+                          if (dayFinalized) {
+                            // Frozen day — use stored status
+                            pickClass = pick.status === 'won' ? 'text-green-600 font-bold' :
+                                       pick.status === 'eliminated' ? 'text-red-600 font-bold' :
+                                       'text-gray-600';
+                            displayPick = pick.team;
+                          } else {
+                            // Live day — calculate from scoreboard
+                            const game = scoreboard.find(g =>
+                              g.date === testDays.find(td => `Day ${td.day}` === dayRound)?.date &&
+                              (normalizeTeamName(g.homeTeam.name).includes(normalizeTeamName(pick.team)) ||
+                               normalizeTeamName(g.awayTeam.name).includes(normalizeTeamName(pick.team)) ||
+                               normalizeTeamName(pick.team).includes(normalizeTeamName(g.homeTeam.name)) ||
+                               normalizeTeamName(pick.team).includes(normalizeTeamName(g.awayTeam.name)))
+                            );
 
-                          if (game) {
-                            const statusLower = game.status.toLowerCase();
-                            const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
+                            if (game) {
+                              const statusLower = game.status.toLowerCase();
+                              const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
 
-                            if (isFinal) {
-                              const homeScoreStr = game.homeTeam.score;
-                              const awayScoreStr = game.awayTeam.score;
+                              if (isFinal) {
+                                const homeScoreStr = game.homeTeam.score;
+                                const awayScoreStr = game.awayTeam.score;
 
-                              if (homeScoreStr !== '—' && awayScoreStr !== '—') {
-                                const homeScore = Number(homeScoreStr);
-                                const awayScore = Number(awayScoreStr);
+                                if (homeScoreStr !== '—' && awayScoreStr !== '—') {
+                                  const homeScore = Number(homeScoreStr);
+                                  const awayScore = Number(awayScoreStr);
 
-                                if (!isNaN(homeScore) && !isNaN(awayScore)) {
-                                  const normalizedPick = normalizeTeamName(pick.team);
-                                  const homeNorm = normalizeTeamName(game.homeTeam.name);
-                                  const awayNorm = normalizeTeamName(game.awayTeam.name);
+                                  if (!isNaN(homeScore) && !isNaN(awayScore)) {
+                                    const normalizedPick = normalizeTeamName(pick.team);
+                                    const homeNorm = normalizeTeamName(game.homeTeam.name);
+                                    const awayNorm = normalizeTeamName(game.awayTeam.name);
 
-                                  const isHome = homeNorm.includes(normalizedPick) || normalizedPick.includes(homeNorm);
-                                  const won = isHome ? homeScore > awayScore : awayScore > homeScore;
+                                    const isHome = homeNorm.includes(normalizedPick) || normalizedPick.includes(homeNorm);
+                                    const won = isHome ? homeScore > awayScore : awayScore > homeScore;
 
-                                  pickClass = won ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
-                                  displayPick = pick.team;
+                                    pickClass = won ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
+                                    displayPick = pick.team;
+                                  } else {
+                                    displayPick = pick.team;
+                                    pickClass = 'text-gray-600';
+                                  }
                                 } else {
                                   displayPick = pick.team;
                                   pickClass = 'text-gray-600';
                                 }
                               } else {
                                 displayPick = pick.team;
-                                pickClass = 'text-gray-600';
+                                pickClass = 'text-yellow-600';
                               }
                             } else {
                               displayPick = pick.team;
-                              pickClass = 'text-yellow-600';
+                              pickClass = 'text-gray-600';
                             }
-                          } else {
-                            displayPick = pick.team;
-                            pickClass = 'text-gray-600';
                           }
                         } else if (dayPassedNoon) {
                           displayPick = <span className="text-red-600 font-bold">SHAME</span>;
@@ -966,7 +983,11 @@ export default function Home() {
                                 ))}
                               </select>
                             ) : (
-                              <span className={pickClass}>{displayPick}</span>
+                              cellVisible ? (
+                                <span className={pickClass}>{displayPick}</span>
+                              ) : (
+                                <span style={{ color: 'transparent' }}>•••••</span> // uniform blur, no length clues
+                              )
                             )}
                           </td>
                         );
