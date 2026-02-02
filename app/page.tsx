@@ -227,7 +227,7 @@ const isDayFinalized = (day: number) => {
   if (!dayInfo) return false;
 
   const cutoff = new Date(dayInfo.date);
-  cutoff.setHours(23, 55, 0, 0); // 11:55 PM ET
+  cutoff.setHours(23, 55, 0, 0); // 11:55 PM ET on game day
 
   return new Date() > cutoff;
 };
@@ -573,9 +573,7 @@ export default function Home() {
     const isFinalized = isDayFinalized(dayNum);
 
     if (isFinalized) {
-      // Day is locked — use stored result only
-      // In practice, you'd read from pick.status if available
-      // For now fallback to gray; add stored status check if needed
+      // Day is locked — use stored result only (fallback to gray if no status)
       return 'bg-gray-100 text-gray-800';
     }
 
