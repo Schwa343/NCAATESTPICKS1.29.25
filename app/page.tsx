@@ -216,8 +216,8 @@ export default function Home() {
         return {
           name: short,
           fullName,
-          picks: existing.sort((a, b) => (a.createdAt || '0').localeCompare(b.createdAt || '0')),
-          status: existing.some(p => p.status === 'eliminated') ? 'eliminated' : 'alive',
+          picks: existing.sort((a: Pick, b: Pick) => (a.createdAt || '0').localeCompare(b.createdAt || '0')),
+          status: existing.some((p: Pick) => p.status === 'eliminated') ? 'eliminated' : 'alive',
         };
       });
 
@@ -279,7 +279,7 @@ export default function Home() {
 
     if (shortName.toLowerCase() === 'stanley s') {
       setIsAdmin(true);
-      setStatusMessage('Admin mode activated — click any pick to edit');
+      setStatusMessage('Admin mode activated — click any pick cell to edit');
       setFirstName(''); setLastInitial('');
       return;
     }
@@ -350,8 +350,7 @@ export default function Home() {
     const user = allUsers.find(u => u.name === userName);
     if (!user) return;
 
-    // Prevent saving a team already used by this player on another day
-    const alreadyUsed = user.picks.some(p => p.team === newTeam && p.round !== round);
+    const alreadyUsed = user.picks.some((p: Pick) => p.team === newTeam && p.round !== round);
     if (alreadyUsed) {
       setStatusMessage(`Cannot assign ${newTeam} — already used by ${userName} on another day`);
       setEditingCell(null);
