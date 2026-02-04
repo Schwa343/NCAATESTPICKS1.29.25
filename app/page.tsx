@@ -66,7 +66,9 @@ function LiveTicker() {
 
       let allEvents: any[] = [];
       for (const dateStr of [formatDate(today), formatDate(tomorrow)]) {
-        const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${dateStr}&groups=50&limit=500`);
+        const res = await fetch(
+          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${dateStr}&groups=50&limit=500`
+        );
         if (res.ok) {
           const data = await res.json();
           allEvents = [...allEvents, ...(data.events || [])];
@@ -85,11 +87,19 @@ function LiveTicker() {
 
         return {
           gameId: e.id,
-          homeTeam: { name: home.team.shortDisplayName || home.team.displayName || '', score: home.score || '—', rank: !isNaN(hr) && hr >=1 && hr <=25 ? hr : '' },
-          awayTeam: { name: away.team.shortDisplayName || away.team.displayName || '', score: away.score || '—', rank: !isNaN(ar) && ar >=1 && ar <=25 ? ar : '' },
+          homeTeam: {
+            name: home.team.shortDisplayName || home.team.displayName || '',
+            score: home.score || '—',
+            rank: !isNaN(hr) && hr >= 1 && hr <= 25 ? hr : '',
+          },
+          awayTeam: {
+            name: away.team.shortDisplayName || away.team.displayName || '',
+            score: away.score || '—',
+            rank: !isNaN(ar) && ar >= 1 && ar <= 25 ? ar : '',
+          },
           status: comp.status.type.description || 'Scheduled',
           clock: comp.status.displayClock || '',
-          date: new Date(comp.date).toISOString().split('T')[0],
+          date: new Date(comp.date).toLocaleDateString('en-CA'), // reliable YYYY-MM-DD
           startTime: comp.date,
         };
       }).filter(Boolean) as Game[];
@@ -98,18 +108,19 @@ function LiveTicker() {
         const desc = g.status.toLowerCase();
         return !desc.includes('final') && !desc.includes('end') && (g.homeTeam.rank || g.awayTeam.rank);
       }));
-    } catch {
+    } catch (err) {
       setError('Live scores unavailable');
     }
   };
 
   useEffect(() => {
     fetchScores();
-    setInterval(fetchScores, 60000);
+    const interval = setInterval(fetchScores, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   if (error) return <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">{error}</div>;
-  if (!games.length) return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No ranked games live/upcoming</div>;
+  if (games.length === 0) return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No ranked games live/upcoming</div>;
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-[#2A6A5E] text-white py-3 px-4 overflow-hidden whitespace-nowrap shadow-lg">
@@ -122,7 +133,9 @@ function LiveTicker() {
           <span key={i} className="font-medium">
             {g.awayTeam.rank ? `#${g.awayTeam.rank} ` : ''}{g.awayTeam.name} {g.awayTeam.score} @
             {g.homeTeam.rank ? `#${g.homeTeam.rank} ` : ''}{g.homeTeam.name} {g.homeTeam.score}
-            <span className="text-yellow-300 ml-2 font-semibold">{g.status}{g.clock && ` (${g.clock})`}</span>
+            <span className="text-yellow-300 ml-2 font-semibold">
+              {g.status}{g.clock && g.clock !== '0:00' ? ` (${g.clock})` : ''}
+            </span>
           </span>
         ))}
       </div>
@@ -148,15 +161,17 @@ export default function Home() {
     const fetchScores = async () => {
       const today = new Date();
       const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-      const dates = [today, tomorrow].map(d => d.toISOString().split('T')[0].replace(/-/g, ''));
+      const dates = [today.toISOString().split('T')[0].replace(/-/g, ''), tomorrow.toISOString().split('T')[0].replace(/-/g, '')];
 
       let events: any[] = [];
       for (const dateStr of dates) {
-        const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${dateStr}`);
-        if (res.ok) {
-          const data = await res.json();
-          events = [...events, ...(data.events || [])];
-        }
+        try {
+          const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${dateStr}`);
+          if (res.ok) {
+            const data = await res.json();
+            events = [...events, ...(data.events || [])];
+          }
+        } catch {}
       }
 
       const games = events.map((e: any) => {
@@ -170,7 +185,7 @@ export default function Home() {
           awayTeam: { name: away.team.shortDisplayName || '', score: away.score || '—', rank: away.curatedRank?.current || '' },
           status: comp?.status?.type?.description || 'Scheduled',
           clock: comp?.status?.displayClock || '',
-          date: new Date(comp.date).toISOString().split('T')[0],
+          date: new Date(comp.date).toLocaleDateString('en-CA'), // ensures YYYY-MM-DD local
           startTime: comp.date,
         };
       }).filter(Boolean) as Game[];
@@ -217,7 +232,7 @@ export default function Home() {
         const dayOffset = Number(pick.round.replace('Day ', '')) - 1;
         const pickDate = new Date();
         pickDate.setDate(pickDate.getDate() + dayOffset);
-        const pickDateStr = pickDate.toISOString().split('T')[0];
+        const pickDateStr = pickDate.toLocaleDateString('en-CA');
 
         const game = scoreboard.find(g => g.date === pickDateStr &&
           (normalizeTeamName(g.homeTeam.name).includes(normalizeTeamName(pick.team)) ||
@@ -296,7 +311,10 @@ export default function Home() {
       const existing = await getDocs(q);
 
       if (!existing.empty) {
-        await updateDoc(doc(db, 'picks', existing.docs[0].id), { team: selectedTeam, timestamp: serverTimestamp() });
+        await updateDoc(doc(db, 'picks', existing.docs[0].id), {
+          team: selectedTeam,
+          timestamp: serverTimestamp(),
+        });
       } else {
         await addDoc(collection(db, 'picks'), {
           name: shortName,
@@ -319,7 +337,7 @@ export default function Home() {
   const dayOffset = currentDay - 1;
   const dayDate = new Date(today);
   dayDate.setDate(today.getDate() + dayOffset);
-  const dayStr = dayDate.toISOString().split('T')[0];
+  const dayStr = dayDate.toLocaleDateString('en-CA');
 
   const dayGames = scoreboard.filter(g => g.date === dayStr);
   const availableTeams = [...new Set(dayGames.flatMap(g => [g.homeTeam.name, g.awayTeam.name].filter(Boolean)))].sort((a,b)=>a.localeCompare(b));
@@ -330,6 +348,10 @@ export default function Home() {
   const noon = new Date(dayDate);
   noon.setHours(12, 0, 0, 0);
   const dayLocked = new Date() >= noon;
+
+  const todayLabel = today.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const tomorrowLabel = new Date(today); tomorrowLabel.setDate(today.getDate() + 1);
+  const tomorrowStr = tomorrowLabel.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
   return (
     <>
@@ -349,13 +371,19 @@ export default function Home() {
         {isAdmin && <p className="text-center text-purple-700 font-bold mb-6">ADMIN MODE — picks visible</p>}
 
         <div className="flex flex-wrap justify-center gap-3 mb-8">
-          <button onClick={() => setCurrentDay(1)} className={`px-6 py-2 rounded-full ${currentDay === 1 ? 'bg-[#2A6A5E] text-white' : 'bg-gray-200'}`}>Day 1 (today)</button>
-          <button onClick={() => setCurrentDay(2)} className={`px-6 py-2 rounded-full ${currentDay === 2 ? 'bg-[#2A6A5E] text-white' : 'bg-gray-200'}`}>Day 2 (tomorrow)</button>
+          <button onClick={() => setCurrentDay(1)} className={`px-6 py-2 rounded-full ${currentDay === 1 ? 'bg-[#2A6A5E] text-white' : 'bg-gray-200'}`}>{todayLabel}</button>
+          <button onClick={() => setCurrentDay(2)} className={`px-6 py-2 rounded-full ${currentDay === 2 ? 'bg-[#2A6A5E] text-white' : 'bg-gray-200'}`}>{tomorrowStr}</button>
         </div>
+
+        {dayGames.length === 0 && (
+          <p className="text-center text-red-600 mb-4">
+            No games loaded for {dayStr} — filtering on this date. Check console for scoreboard dates.
+          </p>
+        )}
 
         <div className="flex flex-wrap justify-center gap-3 max-w-5xl mx-auto mb-10">
           {availableTeams.length === 0 ? (
-            <p className="text-gray-500 italic">No games found for this day yet...</p>
+            <p className="text-gray-500 italic">No teams available for this date</p>
           ) : (
             availableTeams.map(team => {
               const disabled = usedTeams.includes(team) || dayLocked || isEliminated;
@@ -391,8 +419,8 @@ export default function Home() {
                 <tr>
                   <th className="py-4 px-5 text-left">Name</th>
                   <th className="py-4 px-5 text-center">Status</th>
-                  <th className="py-4 px-5 text-center">Day 1</th>
-                  <th className="py-4 px-5 text-center">Day 2</th>
+                  <th className="py-4 px-5 text-center">{todayLabel}</th>
+                  <th className="py-4 px-5 text-center">{tomorrowStr}</th>
                 </tr>
               </thead>
               <tbody>
