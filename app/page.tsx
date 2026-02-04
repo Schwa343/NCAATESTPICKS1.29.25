@@ -22,42 +22,40 @@ interface Game {
   awayTeam: { name: string; score: string; rank: string | number };
   status: string;
   clock: string;
-  date?: string;
+  date: string;
   startTime?: string;
 }
 
 interface Pick {
   id?: string;
-  name?: string;
+  name: string;
   team: string;
   round: string;
   timestamp?: any;
   createdAt?: string;
-  status?: string;
-  eliminatedAt?: any;
+  status?: 'pending' | 'won' | 'eliminated';
+  resultAt?: any;
 }
+
+const participantFullNames = [
+  'Patrick Gifford', 'Garret Gotaas', 'Mike Schwartz', 'Derrick Defever', 'Matt Syzmanski',
+  'Connor Giroux', 'Nick Dahl', 'Chris Canada', 'Brian Burger', 'Rich Deward',
+  'Peter Murray', 'Spenser Pawlik', 'Nick Mowid', 'James Conway', 'Tom Strobel',
+  'Zak Burns', 'Alex McAdoo', 'Sean Falvey', 'Tyler Decoster', 'Mike Gallagher'
+];
 
 function normalizeTeamName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
-    .replace(/state/gi, 'st')
-    .replace(/ohio/gi, 'oh')
-    .replace(/northern/gi, 'n')
-    .replace(/southern/gi, 's')
-    .replace(/miami/gi, 'miami')
-    .replace(/miami oh/gi, 'miamioh');
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\s+/g, '').replace(/state/gi, 'st');
 }
 
-function formatESTTime(isoString?: string): string {
-  if (!isoString) return '';
-  const date = new Date(isoString);
-  return date.toLocaleTimeString('en-US', {
-    timeZone: 'America/New_York',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  }) + ' ET';
+function isAfter(isoWithTz: string): boolean {
+  return new Date() > new Date(isoWithTz);
+}
+
+function getShortName(full: string): string {
+  const [first, ...rest] = full.trim().split(/\s+/);
+  if (rest.length === 0) return full;
+  return `${first.charAt(0).toUpperCase() + first.slice(1).toLowerCase()} ${rest[rest.length-1][0].toUpperCase()}`;
 }
 
 function LiveTicker() {
@@ -66,85 +64,57 @@ function LiveTicker() {
 
   const fetchScores = async () => {
     try {
-      setError(null);
-
       const today = new Date();
-      const yesterday = new Date(today);
-      yesterday.setDate(today.getDate() - 1);
-
+      const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
       const formatDate = (d: Date) => d.toISOString().split('T')[0].replace(/-/g, '');
 
-      const todayStr = formatDate(today);
-      const yesterdayStr = formatDate(yesterday);
-
       let allEvents: any[] = [];
+      for (const dateStr of [formatDate(today), formatDate(tomorrow)]) {
+        try {
+          const res = await fetch(
+            `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${dateStr}&groups=50&limit=500`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            allEvents = [...allEvents, ...(data.events || [])];
+          }
+        } catch {}
+      }
 
-      try {
-        const todayRes = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${todayStr}&groups=50&limit=500`
-        );
-        if (todayRes.ok) {
-          const data = await todayRes.json();
-          allEvents = [...allEvents, ...(data.events || [])];
-        }
-      } catch {}
-
-      try {
-        const yesterdayRes = await fetch(
-          `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yesterdayStr}&groups=50&limit=500`
-        );
-        if (yesterdayRes.ok) {
-          const data = await yesterdayRes.json();
-          allEvents = [...allEvents, ...(data.events || [])];
-        }
-      } catch {}
-
-      const formatted: Game[] = allEvents.map((e: any) => {
+      const formatted = allEvents.map((e: any) => {
         const comp = e.competitions?.[0];
         if (!comp) return null;
-
         const home = comp.competitors.find((c: any) => c.homeAway === 'home');
         const away = comp.competitors.find((c: any) => c.homeAway === 'away');
-
         if (!home || !away) return null;
 
-        const homeRankNum = Number(home.curatedRank?.current);
-        const awayRankNum = Number(away.curatedRank?.current);
+        const homeRank = Number(home.curatedRank?.current);
+        const awayRank = Number(away.curatedRank?.current);
 
         return {
           gameId: e.id,
           homeTeam: {
             name: home.team.shortDisplayName || home.team.displayName || '',
             score: home.score || '—',
-            rank: !isNaN(homeRankNum) && homeRankNum >= 1 && homeRankNum <= 25 ? homeRankNum : '',
+            rank: !isNaN(homeRank) && homeRank >= 1 && homeRank <= 25 ? homeRank : '',
           },
           awayTeam: {
             name: away.team.shortDisplayName || away.team.displayName || '',
             score: away.score || '—',
-            rank: !isNaN(awayRankNum) && awayRankNum >= 1 && awayRankNum <= 25 ? awayRankNum : '',
+            rank: !isNaN(awayRank) && awayRank >= 1 && awayRank <= 25 ? awayRank : '',
           },
           status: comp.status.type.description || 'Scheduled',
           clock: comp.status.displayClock || '',
-          date: comp.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
-          startTime: comp.date || '',
+          date: new Date(comp.date).toISOString().split('T')[0],
+          startTime: comp.date,
         };
       }).filter(Boolean) as Game[];
 
-      const notCompleted = formatted.filter((g) => {
+      setGames(formatted.filter(g => {
         const desc = g.status.toLowerCase();
-        return !desc.includes('final') && !desc.includes('end') && !desc.includes('complete') && !desc.includes('over') && !desc.includes('post');
-      });
-
-      const rankedOnly = notCompleted.filter((g) => {
-        const homeRank = g.homeTeam.rank;
-        const awayRank = g.awayTeam.rank;
-        return (typeof homeRank === 'number' && homeRank >= 1 && homeRank <= 25) ||
-               (typeof awayRank === 'number' && awayRank >= 1 && awayRank <= 25);
-      });
-
-      setGames(rankedOnly);
-    } catch (err) {
-      console.error('Ticker fetch error:', err);
+        return !desc.includes('final') && !desc.includes('end') && (g.homeTeam.rank || g.awayTeam.rank);
+      }));
+    } catch {
       setError('Live scores unavailable');
     }
   };
@@ -155,205 +125,78 @@ function LiveTicker() {
     return () => clearInterval(interval);
   }, []);
 
-  if (error) {
-    return <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">{error}</div>;
-  }
-
-  if (games.length === 0) {
-    return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No ranked games live/upcoming right now</div>;
-  }
-
-  const todayStr = new Date().toLocaleDateString('en-CA');
+  if (error) return <div className="fixed top-0 left-0 right-0 z-50 bg-red-800 text-white py-3 px-4 text-center font-medium">{error}</div>;
+  if (games.length === 0) return <div className="fixed top-0 left-0 right-0 z-50 bg-gray-800 text-white py-3 px-4 text-center font-medium">No ranked games live/upcoming</div>;
 
   return (
     <div className="fixed top-0 left-0 right-0 z-50 bg-[#2A6A5E] text-white py-3 px-4 overflow-hidden whitespace-nowrap shadow-lg">
       <style jsx global>{`
-        @keyframes marquee {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        .animate-marquee {
-          animation: marquee 50s linear infinite;
-        }
+        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        .animate-marquee { animation: marquee 70s linear infinite; }
       `}</style>
       <div className="inline-flex animate-marquee gap-20">
-        {games.concat(games).map((game, i) => {
-          const isYesterday = game.date && game.date < todayStr;
-          const isFinal = game.status.toLowerCase().includes('final') || game.status.toLowerCase().includes('ended');
-          const isScheduled = game.status.toLowerCase().includes('scheduled');
-
-          let displayStatus = game.status;
-          let displayClock = '';
-
-          if (isYesterday) {
-            displayStatus = 'Final';
-          } else if (isFinal) {
-            displayClock = '';
-          } else if (isScheduled && game.startTime) {
-            displayStatus = `Tip: ${formatESTTime(game.startTime)}`;
-          } else if (game.clock && game.clock.trim() !== '' && game.clock !== '0:00') {
-            displayClock = ` (${game.clock})`;
-          }
-
-          const awayScore = game.awayTeam.score !== '—' ? ` ${game.awayTeam.score}` : '';
-          const homeScore = game.homeTeam.score !== '—' ? ` ${game.homeTeam.score}` : '';
-
-          return (
-            <span key={i} className="font-medium">
-              {game.awayTeam.rank ? `#${game.awayTeam.rank} ` : ''}
-              {game.awayTeam.name}{awayScore} @
-              {game.homeTeam.rank ? `#${game.homeTeam.rank} ` : ''}
-              {game.homeTeam.name}{homeScore}
-              {' '}
-              <span className="text-yellow-300 font-semibold">
-                {displayStatus}{displayClock}
-              </span>
+        {[...games, ...games].map((g, i) => (
+          <span key={i} className="font-medium">
+            {g.awayTeam.rank ? `#${g.awayTeam.rank} ` : ''}{g.awayTeam.name} {g.awayTeam.score} @
+            {g.homeTeam.rank ? `#${g.homeTeam.rank} ` : ''}{g.homeTeam.name} {g.homeTeam.score}
+            <span className="text-yellow-300 ml-2 font-semibold">
+              {g.status}{g.clock && g.clock !== '0:00' ? ` (${g.clock})` : ''}
             </span>
-          );
-        })}
+          </span>
+        ))}
       </div>
     </div>
   );
 }
-
-const testDays = [
-  { day: 1, label: 'Mon Feb 2', date: '2026-02-02', noonET: '2026-02-02T12:00:00-05:00' },
-  { day: 2, label: 'Tue Feb 3', date: '2026-02-03', noonET: '2026-02-03T12:00:00-05:00' },
-  { day: 3, label: 'Wed Feb 4', date: '2026-02-04', noonET: '2026-02-04T12:00:00-05:00' },
-];
-
-const isDayFinalized = (day: number) => {
-  const dayInfo = testDays.find(d => d.day === day);
-  if (!dayInfo) return false;
-
-  const cutoff = new Date(dayInfo.date);
-  cutoff.setHours(23, 55, 0, 0); // 11:55 PM ET
-
-  return new Date() > cutoff;
-};
-
-const averageDaysSurvived: Record<string, number> = {
-  "Patrick Gifford": 4.4,
-  "Garret Gotaas": 2.8,
-  "Mike Schwartz": 3.5,
-  "Derrick Defever": 2.9,
-  "Matt Syzmanski": 4.1,
-  "Connor Giroux": 3.1,
-  "Nick Dahl": 4.4,
-  "Chris Canada": 2.9,
-  "Brian Burger": 4.0,
-  "Rich Deward": 4.4,
-  "Peter Murray": 3.1,
-  "Spenser Pawlik": 3.7,
-  "Nick Mowid": 3.4,
-  "James Conway": 3.3,
-  "Tom Strobel": 1.0,
-  "Zak Burns": 1.4,
-  "Alex McAdoo": 5.0,
-  "Sean Falvey": 4.0,
-  "Tyler Decoster": 6.5,
-  "Mike Gallagher": 1.0,
-};
 
 export default function Home() {
   const [firstName, setFirstName] = useState('');
   const [lastInitial, setLastInitial] = useState('');
   const [selectedTeam, setSelectedTeam] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
-  const [userPicks, setUserPicks] = useState<any[]>([]);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
   const [scoreboard, setScoreboard] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
-  const [forceRevealed, setForceRevealed] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [editingCell, setEditingCell] = useState<{ name: string; round: string } | null>(null);
   const [currentDay, setCurrentDay] = useState(1);
-  const [nameLocked, setNameLocked] = useState(false);
   const [usedTeams, setUsedTeams] = useState<string[]>([]);
-  const [hasSubmitted, setHasSubmitted] = useState(false);
 
-  const participantNames = [
-    'Patrick Gifford',
-    'Garret Gotaas',
-    'Mike Schwartz',
-    'Derrick Defever',
-    'Matt Syzmanski',
-    'Connor Giroux',
-    'Nick Dahl',
-    'Chris Canada',
-    'Brian Burger',
-    'Rich Deward',
-    'Peter Murray',
-    'Spenser Pawlik',
-    'Nick Mowid',
-    'James Conway',
-    'Tom Strobel',
-    'Zak Burns',
-    'Alex McAdoo',
-    'Sean Falvey',
-    'Tyler Decoster',
-    'Mike Gallagher',
-  ];
-
-  const getShortName = (fullName: string): string => {
-    const parts = fullName.trim().split(/\s+/);
-    if (parts.length < 2) return fullName;
-    const first = parts[0];
-    const lastInitial = parts[parts.length - 1].charAt(0).toUpperCase();
-    return `${first.charAt(0).toUpperCase() + first.slice(1).toLowerCase()} ${lastInitial}`;
-  };
-
-  const currentShortName = `${firstName.trim().charAt(0).toUpperCase() + firstName.trim().slice(1).toLowerCase()} ${lastInitial.trim().toUpperCase()}`.trim();
-
-  useEffect(() => {
-    setHasSubmitted(false);
-  }, [currentShortName]);
+  const shortName = `${firstName.trim().charAt(0).toUpperCase() + firstName.trim().slice(1).toLowerCase()} ${lastInitial.trim().toUpperCase()}`.trim();
 
   useEffect(() => {
     const fetchScores = async () => {
-      try {
-        const today = new Date();
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(today.getDate() + 1);
+      const today = new Date();
+      const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+      const dates = [today, tomorrow].map(d => d.toISOString().split('T')[0].replace(/-/g, ''));
 
-        const formatDate = (d: Date) => d.toISOString().split('T')[0].replace(/-/g, '');
-
-        const dates = [formatDate(yesterday), formatDate(today), formatDate(tomorrow)];
-
-        let allEvents: any[] = [];
-
-        for (const dateStr of dates) {
-          try {
-            const res = await fetch(
-              `https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${dateStr}`
-            );
-            if (res.ok) {
-              const data = await res.json();
-              allEvents = [...allEvents, ...(data.events || [])];
-            }
-          } catch {}
-        }
-
-        const formatted = allEvents.map((e: any) => {
-          const comp = e.competitions?.[0];
-          const home = comp?.competitors?.find((c: any) => c.homeAway === 'home');
-          const away = comp?.competitors?.find((c: any) => c.homeAway === 'away');
-
-          return {
-            gameId: e.id,
-            homeTeam: { name: home?.team.shortDisplayName || '', score: home?.score || '—', rank: home?.curatedRank?.current || '' },
-            awayTeam: { name: away?.team.shortDisplayName || '', score: away?.score || '—', rank: away?.curatedRank?.current || '' },
-            status: comp?.status?.type?.description || 'Scheduled',
-            clock: comp?.status?.displayClock || '',
-            date: comp?.date ? new Date(comp.date).toLocaleDateString('en-CA') : '',
-          };
-        }).filter((g: Game) => g.homeTeam.name && g.awayTeam.name);
-
-        setScoreboard(formatted);
-      } catch (err) {
-        console.error('ESPN fetch error:', err);
+      let events: any[] = [];
+      for (const dateStr of dates) {
+        try {
+          const res = await fetch(`https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${dateStr}`);
+          if (res.ok) {
+            const data = await res.json();
+            events = [...events, ...(data.events || [])];
+          }
+        } catch {}
       }
+
+      const games = events.map((e: any) => {
+        const comp = e.competitions?.[0];
+        const home = comp?.competitors?.find((c: any) => c.homeAway === 'home');
+        const away = comp?.competitors?.find((c: any) => c.homeAway === 'away');
+        if (!home || !away) return null;
+        return {
+          gameId: e.id,
+          homeTeam: { name: home.team.shortDisplayName || '', score: home.score || '—', rank: home.curatedRank?.current || '' },
+          awayTeam: { name: away.team.shortDisplayName || '', score: away.score || '—', rank: away.curatedRank?.current || '' },
+          status: comp?.status?.type?.description || 'Scheduled',
+          clock: comp?.status?.displayClock || '',
+          date: new Date(comp.date).toISOString().split('T')[0],
+          startTime: comp.date,
+        };
+      }).filter(Boolean) as Game[];
+
+      setScoreboard(games);
     };
 
     fetchScores();
@@ -363,185 +206,115 @@ export default function Home() {
 
   useEffect(() => {
     const q = query(collection(db, 'picks'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const all = snap.docs.map((doc) => ({
-        id: doc.id,
-        ...(doc.data() as Pick),
-      }));
+    const unsub = onSnapshot(q, snap => {
+      const raw = snap.docs.map(d => ({ id: d.id, ...d.data() } as Pick));
       const grouped = new Map<string, Pick[]>();
-      all.forEach((pick) => {
-        if (!grouped.has(pick.name || '')) grouped.set(pick.name || '', []);
-        grouped.get(pick.name || '')!.push(pick);
+      raw.forEach(p => {
+        if (!p.name) return;
+        if (!grouped.has(p.name)) grouped.set(p.name, []);
+        grouped.get(p.name)!.push(p);
       });
-      const formatted = Array.from(grouped.entries()).map(([name, picks]) => ({
+      const users = Array.from(grouped.entries()).map(([name, picks]) => ({
         name,
-        picks: picks.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()),
-        status: picks.some((p) => p.status === 'eliminated') ? 'eliminated' : 'alive',
+        picks: picks.sort((a, b) => (a.createdAt || '0').localeCompare(b.createdAt || '0')),
+        status: picks.some(p => p.status === 'eliminated') ? 'eliminated' : 'alive',
       }));
-      setUserPicks(formatted);
+      setAllUsers(users);
       setLoading(false);
-    }, (err) => {
-      console.error('Picks fetch error:', err);
-      setLoading(false);
+
+      const me = users.find(u => u.name === shortName);
+      if (me) setUsedTeams(me.picks.map((p: Pick) => p.team).filter(Boolean));
     });
+    return unsub;
+  }, [shortName]);
 
-    return () => unsubscribe();
-  }, []);
-
-  // Auto-eliminate + result marking — skip finalized days
   useEffect(() => {
-    if (scoreboard.length === 0 || userPicks.length === 0) return;
+    if (!scoreboard.length || !allUsers.length) return;
 
-    userPicks.forEach(async (user) => {
-      const alivePicks = user.picks.filter(
-        (p: Pick) => !p.status || p.status !== 'eliminated'
-      );
+    allUsers.forEach(user => {
+      user.picks.forEach(async (pick: Pick) => {
+        if (pick.status && pick.status !== 'pending') return;
 
-      for (const pick of alivePicks) {
-        const dayNum = parseInt(pick.round.replace('Day ', ''));
-        if (isDayFinalized(dayNum)) continue; // Locked — don't recalculate
+        const dayNum = Number(pick.round.replace('Day ', ''));
+        const today = new Date();
+        const dayDate = new Date(today);
+        dayDate.setDate(today.getDate() + dayNum - 1);
+        const dayStr = dayDate.toISOString().split('T')[0];
 
-        const dayInfo = testDays.find(d => d.day === dayNum);
-        if (!dayInfo) continue;
+        const game = scoreboard.find(g => g.date === dayStr &&
+          (normalizeTeamName(g.homeTeam.name).includes(normalizeTeamName(pick.team)) ||
+           normalizeTeamName(g.awayTeam.name).includes(normalizeTeamName(pick.team)))
+        );
 
-        const normalizedPick = normalizeTeamName(pick.team);
+        if (!game) return;
 
-        const game = scoreboard.find(g => {
-          if (g.date !== dayInfo.date) return false;
+        const isFinal = game.status.toLowerCase().includes('final') || game.status.toLowerCase().includes('end');
+        if (!isFinal) return;
 
-          const homeNorm = normalizeTeamName(g.homeTeam.name);
-          const awayNorm = normalizeTeamName(g.awayTeam.name);
+        const h = Number(game.homeTeam.score) || 0;
+        const a = Number(game.awayTeam.score) || 0;
+        if (h === 0 && a === 0) return;
 
-          return homeNorm.includes(normalizedPick) ||
-                 awayNorm.includes(normalizedPick) ||
-                 normalizedPick.includes(homeNorm) ||
-                 normalizedPick.includes(awayNorm);
-        });
+        const pickedNorm = normalizeTeamName(pick.team);
+        const isHome = normalizeTeamName(game.homeTeam.name).includes(pickedNorm);
+        const won = isHome ? h > a : a > h;
 
-        if (!game) continue;
-
-        const statusLower = game.status.toLowerCase();
-        const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
-
-        if (!isFinal) continue;
-
-        const homeScoreStr = game.homeTeam.score;
-        const awayScoreStr = game.awayTeam.score;
-
-        if (homeScoreStr === '—' || awayScoreStr === '—' || !homeScoreStr || !awayScoreStr) continue;
-
-        const homeScore = Number(homeScoreStr);
-        const awayScore = Number(awayScoreStr);
-
-        if (isNaN(homeScore) || isNaN(awayScore)) continue;
-
-        const normalizedPickTeam = normalizeTeamName(pick.team);
-        const homeNorm = normalizeTeamName(game.homeTeam.name);
-        const awayNorm = normalizeTeamName(game.awayTeam.name);
-
-        const isHome = homeNorm.includes(normalizedPickTeam) || normalizedPickTeam.includes(homeNorm);
-        const isAway = awayNorm.includes(normalizedPickTeam) || normalizedPickTeam.includes(awayNorm);
-
-        const won = (isHome && homeScore > awayScore) || (isAway && awayScore > homeScore);
-        const lost = (isHome && homeScore < awayScore) || (isAway && awayScore < homeScore);
-
-        if (won || lost) {
-          try {
-            const ref = collection(db, 'picks');
-            const q = query(ref, where('name', '==', user.name), where('round', '==', pick.round));
-            const existing = await getDocs(q);
-
-            if (!existing.empty) {
-              const docRef = doc(db, 'picks', existing.docs[0].id);
-              await updateDoc(docRef, {
-                status: lost ? 'eliminated' : 'won',
-                resultAt: serverTimestamp(),
-              });
-            }
-          } catch (err) {
-            console.error('Failed to update pick result:', err);
-          }
+        const q = query(collection(db, 'picks'), where('name','==',user.name), where('round','==',pick.round));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          await updateDoc(doc(db, 'picks', snap.docs[0].id), {
+            status: won ? 'won' : 'eliminated',
+            resultAt: serverTimestamp(),
+          });
         }
-      }
+      });
     });
-  }, [scoreboard, userPicks]);
-
-  useEffect(() => {
-    if (!currentShortName) return;
-    const user = userPicks.find(u => u.name === currentShortName);
-    if (user) {
-      setNameLocked(true);
-      setUsedTeams(user.picks.map((p: Pick) => p.team).filter(Boolean));
-    }
-  }, [currentShortName, userPicks]);
-
-  const isDayLocked = (day: number): boolean => {
-    const dayInfo = testDays.find(d => d.day === day);
-    if (!dayInfo) return false;
-    const noon = new Date(dayInfo.noonET);
-    return new Date() >= noon;
-  };
-
-  const currentDayLocked = isDayLocked(currentDay);
-
-  const availableTeamsForDay = (day: number) => {
-    const dayInfo = testDays.find(d => d.day === day);
-    if (!dayInfo) return [];
-    const gamesForDay = scoreboard.filter(g => g.date === dayInfo.date);
-    return [...new Set(gamesForDay.flatMap(g => [g.homeTeam.name, g.awayTeam.name]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  };
+  }, [scoreboard, allUsers]);
 
   const handleSubmit = async () => {
-    let trimmedFirst = firstName.trim();
-    let trimmedInitial = lastInitial.trim().toUpperCase();
-
-    if (!trimmedFirst || trimmedInitial.length !== 1 || !/^[A-Z]$/.test(trimmedInitial)) {
-      setStatusMessage('First name + one uppercase initial (A-Z) required');
+    if (!firstName.trim() || lastInitial.length !== 1) {
+      setStatusMessage('First name + one initial required');
       return;
     }
 
-    trimmedFirst = trimmedFirst.charAt(0).toUpperCase() + trimmedFirst.slice(1).toLowerCase();
-    const shortName = `${trimmedFirst} ${trimmedInitial}`;
-
-    if (trimmedFirst.toLowerCase() === 'stanley' && trimmedInitial === 'S') {
-      setForceRevealed(true);
+    if (shortName.toLowerCase() === 'stanley s') {
       setIsAdmin(true);
-      setStatusMessage('Admin mode activated — picks revealed & editable!');
-      setTimeout(() => setStatusMessage(''), 4000);
-      setFirstName('');
-      setLastInitial('');
+      setStatusMessage('Admin mode activated');
+      setFirstName(''); setLastInitial('');
       return;
     }
 
-    const allowedShortNames = participantNames.map(getShortName);
-    if (!allowedShortNames.includes(shortName)) {
-      setStatusMessage(`"${shortName}" not recognized — check spelling or ask Mike to add you.`);
+    const allowed = participantFullNames.some(f => getShortName(f) === shortName);
+    if (!allowed) {
+      setStatusMessage('Name not recognized');
       return;
     }
 
-    const user = userPicks.find(u => u.name === shortName);
-    if (user && user.status === 'eliminated') {
-      setStatusMessage('You are eliminated — no more picks allowed.');
+    const user = allUsers.find(u => u.name === shortName);
+    if (user?.status === 'eliminated') {
+      setStatusMessage('You are eliminated');
       return;
     }
 
-    const round = `Day ${currentDay}`;
+    const today = new Date();
+    const dayDate = new Date(today);
+    dayDate.setDate(today.getDate() + currentDay - 1);
+    const noonToday = new Date(dayDate);
+    noonToday.setHours(12, 0, 0, 0);
 
-    if (currentDayLocked) {
-      setStatusMessage(`Picks for ${testDays[currentDay-1].label} are locked — noon ET has passed.`);
+    if (new Date() >= noonToday) {
+      setStatusMessage('Picks locked for this day (noon ET passed)');
       return;
     }
 
     if (usedTeams.includes(selectedTeam)) {
-      setStatusMessage(`Already picked ${selectedTeam}.`);
+      setStatusMessage(`Already picked ${selectedTeam}`);
       return;
     }
 
-    setStatusMessage('Saving...');
-
     try {
-      const ref = collection(db, 'picks');
-      const q = query(ref, where('name', '==', shortName), where('round', '==', round));
+      const round = `Day ${currentDay}`;
+      const q = query(collection(db, 'picks'), where('name','==',shortName), where('round','==',round));
       const existing = await getDocs(q);
 
       if (!existing.empty) {
@@ -550,445 +323,168 @@ export default function Home() {
           timestamp: serverTimestamp(),
         });
       } else {
-        await addDoc(ref, {
+        await addDoc(collection(db, 'picks'), {
           name: shortName,
           team: selectedTeam,
           round,
           timestamp: serverTimestamp(),
           createdAt: new Date().toISOString(),
+          status: 'pending',
         });
       }
 
-      setStatusMessage(`Saved: ${selectedTeam} for ${testDays[currentDay-1].label}`);
+      setStatusMessage(`Saved: ${selectedTeam}`);
       setSelectedTeam('');
-      setNameLocked(true);
-      setHasSubmitted(true);
     } catch (err: any) {
       setStatusMessage('Error: ' + err.message);
     }
   };
 
-  const getPickColor = (team: string, round: string) => {
-    const dayNum = parseInt(round.replace('Day ', ''));
-    const isFinalized = isDayFinalized(dayNum);
+  const today = new Date();
+  const dayDate = new Date(today);
+  dayDate.setDate(today.getDate() + currentDay - 1);
+  const dayStr = dayDate.toISOString().split('T')[0];
 
-    if (isFinalized) {
-      // Day is locked — use stored result only
-      // In practice, you'd read from pick.status if available
-      // For now fallback to gray; add stored status check if needed
-      return 'bg-gray-100 text-gray-800';
-    }
+  const dayGames = scoreboard.filter(g => g.date === dayStr);
+  const availableTeams = [...new Set(dayGames.flatMap(g => [g.homeTeam.name, g.awayTeam.name].filter(Boolean)))].sort((a,b)=>a.localeCompare(b));
 
-    if (!team || team === '—') return 'bg-gray-100 text-gray-800';
+  const myUser = allUsers.find(u => u.name === shortName);
+  const isEliminated = myUser?.status === 'eliminated';
 
-    const dayInfo = testDays.find(d => `Day ${d.day}` === round);
-    if (!dayInfo) return 'bg-gray-100 text-gray-800';
-
-    const normalizedTeam = normalizeTeamName(team);
-
-    const game = scoreboard.find(g => {
-      if (g.date !== dayInfo.date) return false;
-
-      const homeNorm = normalizeTeamName(g.homeTeam.name);
-      const awayNorm = normalizeTeamName(g.awayTeam.name);
-
-      return homeNorm.includes(normalizedTeam) ||
-             awayNorm.includes(normalizedTeam) ||
-             normalizedTeam.includes(homeNorm) ||
-             normalizedTeam.includes(awayNorm);
-    });
-
-    if (!game) return 'bg-gray-100 text-gray-800';
-
-    const statusLower = game.status.toLowerCase();
-    const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
-
-    if (!isFinal) return 'bg-yellow-100 text-yellow-800';
-
-    const homeScore = Number(game.homeTeam.score) || 0;
-    const awayScore = Number(game.awayTeam.score) || 0;
-
-    const pickedClean = team.toLowerCase().replace(/[^a-z0-9]/gi, '');
-    const homeClean = game.homeTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '');
-    const awayClean = game.awayTeam.name.toLowerCase().replace(/[^a-z0-9]/gi, '');
-
-    const isHome = homeClean.includes(pickedClean) || pickedClean.includes(homeClean);
-    const isAway = awayClean.includes(pickedClean) || pickedClean.includes(awayClean);
-
-    if (isHome) {
-      if (homeScore > awayScore) return 'bg-green-100 text-green-800';
-      if (homeScore < awayScore) return 'bg-red-100 text-red-800';
-      return 'bg-yellow-100 text-yellow-800';
-    }
-
-    if (isAway) {
-      if (awayScore > homeScore) return 'bg-green-100 text-green-800';
-      if (awayScore < homeScore) return 'bg-red-100 text-red-800';
-      return 'bg-yellow-100 text-yellow-800';
-    }
-
-    return 'bg-gray-100 text-gray-800';
-  };
-
-  const getPickForDay = (picks: Pick[], round: string) => {
-    return picks.find(p => p.round === round)?.team || '—';
-  };
-
-  const getDisplayPick = (picks: Pick[], round: string, dayInfo: typeof testDays[0]) => {
-    const pick = getPickForDay(picks, round);
-    if (pick && pick !== '—') return pick;
-
-    if (new Date(dayInfo.noonET) <= new Date()) {
-      return <span className="text-red-600 font-bold">SHAME</span>;
-    }
-    return '—';
-  };
-
-  const selectedDayInfo = testDays.find(d => d.day === currentDay);
-  const dayGames = scoreboard.filter(g => g.date === selectedDayInfo?.date);
-  const availableTeams = [...new Set(
-    dayGames.flatMap(g => [g.homeTeam.name, g.awayTeam.name]).filter(Boolean)
-  )].sort((a, b) => a.localeCompare(b));
-
-  const displayedParticipants = participantNames.map(full => {
-    const short = getShortName(full);
-    const userData = userPicks.find(u => u.name === short) || { picks: [], status: 'alive' };
-    return { fullName: full, shortName: short, picks: userData.picks as Pick[], status: userData.status };
-  }).sort((a,b) => {
-    if (a.shortName === currentShortName) return -1;
-    if (b.shortName === currentShortName) return 1;
-    if (a.status === 'alive' && b.status !== 'alive') return -1;
-    if (a.status !== 'alive' && b.status === 'alive') return 1;
-    return a.fullName.localeCompare(b.fullName);
-  });
+  const noonToday = new Date(dayDate);
+  noonToday.setHours(12, 0, 0, 0);
+  const dayLocked = new Date() >= noonToday;
 
   return (
     <>
-      <style jsx global>{`
-        @keyframes marquee {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        .animate-marquee {
-          animation: marquee 50s linear infinite;
-        }
-        .heartbeat-alive {
-          display: inline-block;
-          width: 60px;
-          height: 20px;
-          margin-left: 8px;
-          vertical-align: middle;
-        }
-        .heartbeat-alive svg {
-          width: 100%;
-          height: 100%;
-        }
-        .heartbeat-alive .pulse {
-          animation: heartbeat 1.4s infinite ease-in-out;
-          stroke: #22c55e;
-          stroke-width: 3;
-          fill: none;
-        }
-        @keyframes heartbeat {
-          0%, 100% { d: path("M0 10 L10 10 L15 2 L20 18 L25 10 L35 10"); }
-          40% { d: path("M0 10 L10 10 L13 4 L17 16 L21 10 L35 10"); }
-          60% { d: path("M0 10 L10 10 L14 6 L18 14 L22 10 L35 10"); }
-        }
-        .flatline-dead {
-          display: inline-block;
-          width: 60px;
-          height: 20px;
-          margin-left: 8px;
-          vertical-align: middle;
-          border-bottom: 3px solid #ef4444;
-        }
-      `}</style>
-
       <LiveTicker />
 
-      <main className="min-h-screen bg-[#f5f5f5] flex flex-col items-center pt-28 pb-8 px-4 md:px-8">
-        <Image src="https://upload.wikimedia.org/wikipedia/commons/2/28/March_Madness_logo.svg" alt="March Madness" width={400} height={200} className="mb-4 rounded-lg" priority />
+      <main className="min-h-screen bg-[#f5f5f5] pt-28 pb-12 px-4 md:px-8">
+        <Image
+          src="https://upload.wikimedia.org/wikipedia/commons/2/28/March_Madness_logo.svg"
+          alt="March Madness"
+          width={400}
+          height={200}
+          className="mx-auto mb-6 rounded-lg"
+          priority
+        />
 
-        <h1 className="text-4xl md:text-5xl font-bold text-[#2A6A5E] mb-4 text-center">NCAA Survivor Pool</h1>
-        <p className="text-xl text-gray-700 mb-8 text-center max-w-2xl">
-          Pick one team per day — no repeats. Survive the longest!
+        <h1 className="text-4xl md:text-5xl font-bold text-[#2A6A5E] text-center mb-2">
+          NCAA Survivor Pool
+        </h1>
+        <p className="text-xl text-gray-700 text-center mb-8 max-w-2xl mx-auto">
+          Pick one team per day — no repeats — last one standing wins
         </p>
 
-        <div className="mb-8 flex gap-4">
-          <input type="text" placeholder="First Name" value={firstName} onChange={e => setFirstName(e.target.value)} disabled={nameLocked} className="px-4 py-2 border rounded w-48" />
-          <input type="text" placeholder="L" maxLength={1} value={lastInitial} onChange={e => setLastInitial(e.target.value.toUpperCase().slice(0,1))} disabled={nameLocked} className="px-3 py-2 border rounded w-14 text-center" />
+        <div className="flex justify-center gap-4 mb-8">
+          <input
+            placeholder="First Name"
+            value={firstName}
+            onChange={e => setFirstName(e.target.value)}
+            className="px-4 py-2 border rounded w-52"
+          />
+          <input
+            placeholder="L"
+            maxLength={1}
+            value={lastInitial}
+            onChange={e => setLastInitial(e.target.value.toUpperCase().slice(0,1))}
+            className="w-14 text-center px-2 py-2 border rounded"
+          />
         </div>
 
-        {isAdmin && (
-          <p className="text-center text-lg font-bold text-purple-700 mb-6">
-            ADMIN MODE ACTIVE — Click any pick cell to edit
-          </p>
-        )}
+        {isAdmin && <p className="text-center text-purple-700 font-bold mb-6">ADMIN MODE — picks visible</p>}
 
-        <div className="mb-8 flex flex-wrap gap-3 justify-center">
-          {testDays.map(d => (
+        <div className="flex flex-wrap justify-center gap-3 mb-8">
+          {[1,2,3].map(d => (
             <button
-              key={d.day}
-              onClick={() => setCurrentDay(d.day)}
-              className={`px-5 py-2 rounded-full font-medium ${currentDay === d.day ? 'bg-[#2A6A5E] text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+              key={d}
+              onClick={() => setCurrentDay(d)}
+              className={`px-6 py-2 rounded-full ${currentDay === d ? 'bg-[#2A6A5E] text-white' : 'bg-gray-200'}`}
             >
-              {d.label}
+              Day {d} {d === 1 ? '(today)' : '(tomorrow)'}
             </button>
           ))}
         </div>
 
-        <div className="flex flex-wrap justify-center gap-3 mb-10 max-w-5xl">
+        <div className="flex flex-wrap justify-center gap-3 max-w-5xl mx-auto mb-10">
           {availableTeams.length === 0 ? (
-            <p className="text-gray-500 italic">No games scheduled for {selectedDayInfo?.label} or loading...</p>
-          ) : availableTeams.map(team => {
-            const isUsed = usedTeams.includes(team);
-            const game = scoreboard.find(g =>
-              g.homeTeam.name === team || g.awayTeam.name === team
-            );
-            const rank = game
-              ? (game.homeTeam.name === team ? game.homeTeam.rank : game.awayTeam.rank)
-              : '';
-            const rankDisplay = rank ? `#${rank} ` : '';
-            return (
-              <button
-                key={team}
-                onClick={() => !isUsed && setSelectedTeam(team)}
-                disabled={isUsed || currentDayLocked}
-                className={`px-5 py-2.5 min-w-[160px] border-2 border-[#2A6A5E] rounded-lg font-medium transition-all
-                  ${selectedTeam === team ? 'bg-[#2A6A5E] text-white shadow-md' : 'bg-white text-[#2A6A5E] hover:bg-gray-50'}
-                  ${isUsed || currentDayLocked ? 'opacity-60 line-through cursor-not-allowed bg-gray-100' : ''}`}
-              >
-                {rankDisplay}{team}
-              </button>
-            );
-          })}
+            <p className="text-gray-500 italic">No games found for this day yet...</p>
+          ) : (
+            availableTeams.map(team => {
+              const disabled = usedTeams.includes(team) || dayLocked || isEliminated;
+              return (
+                <button
+                  key={team}
+                  onClick={() => !disabled && setSelectedTeam(team)}
+                  disabled={disabled}
+                  className={`px-6 py-3 border-2 border-[#2A6A5E] rounded-lg min-w-[160px] ${
+                    selectedTeam === team ? 'bg-[#2A6A5E] text-white shadow-md' : 'bg-white text-[#2A6A5E] hover:bg-gray-50'
+                  } ${disabled ? 'opacity-60 line-through bg-gray-100 cursor-not-allowed' : ''}`}
+                >
+                  {team}
+                </button>
+              );
+            })
+          )}
         </div>
 
         <button
-          disabled={!selectedTeam || !firstName.trim() || lastInitial.length !== 1 || currentDayLocked}
           onClick={handleSubmit}
-          className="w-full max-w-md bg-[#2A6A5E] text-white py-4 rounded-xl text-xl font-semibold hover:bg-[#1e4c43] transition disabled:opacity-50 disabled:cursor-not-allowed shadow"
+          disabled={!selectedTeam || !shortName || dayLocked || isEliminated}
+          className="mx-auto block w-full max-w-md bg-[#2A6A5E] text-white py-4 rounded-xl text-xl hover:bg-[#1e4c43] disabled:opacity-50 shadow"
         >
-          {currentDayLocked ? `Locked (${selectedDayInfo?.label})` : 'Submit / Change Pick'}
+          {dayLocked ? 'Locked' : isEliminated ? 'Eliminated' : 'Submit Pick'}
         </button>
 
-        {currentDayLocked && (
-          <p className="mt-4 text-center text-lg text-red-600 font-semibold">
-            Picks for {selectedDayInfo?.label} are locked (noon ET passed)
-          </p>
-        )}
+        {statusMessage && <p className={`mt-6 text-center text-lg ${statusMessage.includes('Error') || statusMessage.includes('locked') ? 'text-red-600' : 'text-[#2A6A5E]'}`}>{statusMessage}</p>}
 
-        {statusMessage && (
-          <p className={`mt-6 text-center text-lg font-medium ${statusMessage.includes('not recognized') ? 'text-red-600' : 'text-[#2A6A5E]'}`}>
-            {statusMessage}
-          </p>
-        )}
-
-        <div className="w-full max-w-4xl mt-16 overflow-x-auto">
+        <div className="w-full max-w-5xl mt-16 overflow-x-auto">
           <h2 className="text-3xl font-bold text-[#2A6A5E] mb-6 text-center">Standings & Picks</h2>
           {loading ? (
             <p className="text-center text-gray-600">Loading...</p>
           ) : (
-            <table className="w-full bg-white/90 rounded-xl overflow-hidden shadow-md">
+            <table className="w-full bg-white rounded-lg shadow overflow-hidden">
               <thead className="bg-[#2A6A5E] text-white">
                 <tr>
                   <th className="py-4 px-5 text-left">Name</th>
-                  <th className="py-4 px-5">Status</th>
-                  <th className="py-4 px-5 text-center">Avg Days</th>
-                  {testDays.map(d => (
-                    <th key={d.day} className="py-4 px-5 text-center">{d.label}</th>
-                  ))}
+                  <th className="py-4 px-5 text-center">Status</th>
+                  <th className="py-4 px-5 text-center">Day 1</th>
+                  <th className="py-4 px-5 text-center">Day 2</th>
+                  <th className="py-4 px-5 text-center">Day 3</th>
                 </tr>
               </thead>
               <tbody>
-                {displayedParticipants.map(entry => {
-                  const isOwn = entry.shortName === currentShortName;
-                  const visible = hasSubmitted && isOwn || forceRevealed || isAdmin;
-                  const isDead = entry.status === 'eliminated';
-
-                  const avg = averageDaysSurvived[entry.fullName];
-                  let avgClass = "text-gray-600";
-                  if (avg >= 4.5) avgClass = "text-green-700 font-semibold";
-                  else if (avg >= 3.5) avgClass = "text-emerald-600 font-medium";
-                  else if (avg >= 2.5) avgClass = "text-amber-700";
-                  else avgClass = "text-gray-500";
+                {allUsers.map(user => {
+                  const isMe = user.name === shortName;
+                  const visible = isMe || isAdmin;
+                  const isDead = user.status === 'eliminated';
 
                   return (
-                    <tr key={entry.fullName} className={`border-b hover:bg-gray-50/70 ${isDead ? 'bg-red-50/50 opacity-75' : ''}`}>
-                      <td className={`py-4 px-5 font-medium ${isDead ? 'text-red-600 font-bold' : 'text-gray-800'}`}>
-                        {entry.fullName}
-                      </td>
-                      <td className="py-4 px-5 font-medium flex items-center">
-                        {isDead ? (
-                          <>
-                            <span className="text-red-600 font-bold">Dead</span>
-                            <div className="flatline-dead" />
-                          </>
-                        ) : (
-                          <>
-                            <span className="text-green-600">Alive</span>
-                            <div className="heartbeat-alive">
-                              <svg viewBox="0 0 35 20">
-                                <path className="pulse" d="M0 10 L10 10 L15 2 L20 18 L25 10 L35 10" />
-                              </svg>
-                            </div>
-                          </>
-                        )}
-                      </td>
+                    <tr key={user.name} className={`border-b hover:bg-gray-50 ${isDead ? 'bg-red-50 line-through opacity-80' : ''}`}>
+                      <td className={`py-4 px-5 font-medium ${isDead ? 'text-red-600' : 'text-gray-800'}`}>{user.name}</td>
                       <td className="py-4 px-5 text-center">
-                        <span className={avgClass}>
-                          {avg ? avg.toFixed(1) : '—'}
-                        </span>
+                        {isDead ? <span className="text-red-600 font-bold">Dead</span> : <span className="text-green-600 font-bold">Alive</span>}
                       </td>
-                      {testDays.map(d => {
-                        const dayRound = `Day ${d.day}`;
-                        const dayPassedNoon = new Date(d.noonET) <= new Date();
-                        const dayFinalized = isDayFinalized(d.day);
-                        const cellVisible = visible || dayPassedNoon || isAdmin;
+                      {[1,2,3].map(d => {
+                        const round = `Day ${d}`;
+                        const pickObj = user.picks.find((p: Pick) => p.round === round);
+                        const pickTeam = pickObj?.team || '—';
 
-                        const pick = entry.picks.find(p => p.round === dayRound);
-                        let displayPick: string | JSX.Element = '—';
-                        let pickClass = '';
+                        let cellClass = 'bg-gray-50 text-gray-500';
+                        let display = pickTeam;
 
-                        if (pick && pick.team) {
-                          if (dayFinalized) {
-                            // Frozen day — use stored status
-                            pickClass = pick.status === 'won' ? 'text-green-600 font-bold' :
-                                       pick.status === 'eliminated' ? 'text-red-600 font-bold' :
-                                       'text-gray-600';
-                            displayPick = pick.team;
-                          } else {
-                            // Live day — calculate from scoreboard
-                            const game = scoreboard.find(g =>
-                              g.date === testDays.find(td => `Day ${td.day}` === dayRound)?.date &&
-                              (normalizeTeamName(g.homeTeam.name).includes(normalizeTeamName(pick.team)) ||
-                               normalizeTeamName(g.awayTeam.name).includes(normalizeTeamName(pick.team)) ||
-                               normalizeTeamName(pick.team).includes(normalizeTeamName(g.homeTeam.name)) ||
-                               normalizeTeamName(pick.team).includes(normalizeTeamName(g.awayTeam.name)))
-                            );
-
-                            if (game) {
-                              const statusLower = game.status.toLowerCase();
-                              const isFinal = statusLower.includes('final') || statusLower.includes('end') || statusLower.includes('complete') || statusLower.includes('over') || statusLower.includes('post');
-
-                              if (isFinal) {
-                                const homeScoreStr = game.homeTeam.score;
-                                const awayScoreStr = game.awayTeam.score;
-
-                                if (homeScoreStr !== '—' && awayScoreStr !== '—') {
-                                  const homeScore = Number(homeScoreStr);
-                                  const awayScore = Number(awayScoreStr);
-
-                                  if (!isNaN(homeScore) && !isNaN(awayScore)) {
-                                    const normalizedPick = normalizeTeamName(pick.team);
-                                    const homeNorm = normalizeTeamName(game.homeTeam.name);
-                                    const awayNorm = normalizeTeamName(game.awayTeam.name);
-
-                                    const isHome = homeNorm.includes(normalizedPick) || normalizedPick.includes(homeNorm);
-                                    const won = isHome ? homeScore > awayScore : awayScore > homeScore;
-
-                                    pickClass = won ? 'text-green-600 font-bold' : 'text-red-600 font-bold';
-                                    displayPick = pick.team;
-                                  } else {
-                                    displayPick = pick.team;
-                                    pickClass = 'text-gray-600';
-                                  }
-                                } else {
-                                  displayPick = pick.team;
-                                  pickClass = 'text-gray-600';
-                                }
-                              } else {
-                                displayPick = pick.team;
-                                pickClass = 'text-yellow-600';
-                              }
-                            } else {
-                              displayPick = pick.team;
-                              pickClass = 'text-gray-600';
-                            }
-                          }
-                        } else if (dayPassedNoon) {
-                          displayPick = <span className="text-red-600 font-bold">SHAME</span>;
+                        if (pickTeam !== '—') {
+                          if (pickObj?.status === 'won') cellClass = 'bg-green-100 text-green-800 font-bold';
+                          else if (pickObj?.status === 'eliminated') cellClass = 'bg-red-100 text-red-800 font-bold line-through';
+                          else cellClass = 'bg-yellow-100 text-yellow-800';
+                        } else if (d === currentDay && dayLocked) {
+                          display = <span className="text-red-600 font-bold">SHAME</span>;
+                          cellClass = 'bg-red-50';
                         }
 
-                        const isEditingThisCell = isAdmin && editingCell?.name === entry.shortName && editingCell?.round === dayRound;
-
                         return (
-                          <td
-                            key={d.day}
-                            className={`py-4 px-5 text-center font-semibold cursor-pointer ${cellVisible ? getPickColor(getPickForDay(entry.picks, dayRound), dayRound) : 'bg-gray-200 text-transparent blur-sm select-none'} ${isDead ? 'line-through text-gray-500' : ''}`}
-                            onClick={() => {
-                              if (isAdmin && !isEditingThisCell && cellVisible) {
-                                setEditingCell({ name: entry.shortName, round: dayRound });
-                              }
-                            }}
-                          >
-                            {isEditingThisCell ? (
-                              <select
-                                autoFocus
-                                value={getPickForDay(entry.picks, dayRound) || ''}
-                                onChange={async (e) => {
-                                  const newTeam = e.target.value;
-                                  if (!newTeam) {
-                                    setEditingCell(null);
-                                    return;
-                                  }
-
-                                  const userPicksArray = entry.picks || [];
-                                  const alreadyPicked = userPicksArray.some(
-                                    (p: Pick) => p.team === newTeam && p.round !== dayRound
-                                  );
-                                  if (alreadyPicked) {
-                                    alert(`This person already picked ${newTeam} on another day.`);
-                                    setEditingCell(null);
-                                    return;
-                                  }
-
-                                  try {
-                                    const ref = collection(db, 'picks');
-                                    const q = query(ref, where('name', '==', entry.shortName), where('round', '==', dayRound));
-                                    const existing = await getDocs(q);
-
-                                    if (!existing.empty) {
-                                      await updateDoc(doc(db, 'picks', existing.docs[0].id), {
-                                        team: newTeam,
-                                        timestamp: serverTimestamp(),
-                                        createdAt: new Date().toISOString(),
-                                      });
-                                    } else {
-                                      await addDoc(ref, {
-                                        name: entry.shortName,
-                                        team: newTeam,
-                                        round: dayRound,
-                                        timestamp: serverTimestamp(),
-                                        createdAt: new Date().toISOString(),
-                                      });
-                                    }
-
-                                    setStatusMessage(`Updated ${entry.fullName}'s ${dayRound} pick to ${newTeam}`);
-                                    setTimeout(() => setStatusMessage(''), 3000);
-                                  } catch (err: any) {
-                                    setStatusMessage('Save failed: ' + err.message);
-                                  }
-
-                                  setEditingCell(null);
-                                }}
-                                onBlur={() => setEditingCell(null)}
-                                className="w-full text-center bg-white border border-gray-300 rounded px-1 py-0.5"
-                              >
-                                <option value="">—</option>
-                                {availableTeamsForDay(d.day).map(team => (
-                                  <option key={team} value={team}>
-                                    {team}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              cellVisible ? (
-                                <span className={pickClass}>{displayPick}</span>
-                              ) : (
-                                <span style={{ color: 'transparent' }}>•••••</span> // uniform blur, no length clues
-                              )
-                            )}
+                          <td key={d} className={`py-4 px-5 text-center font-semibold ${visible ? cellClass : 'bg-gray-200 text-transparent blur-sm'}`}>
+                            {visible ? display : '█████'}
                           </td>
                         );
                       })}
@@ -1000,7 +496,9 @@ export default function Home() {
           )}
         </div>
 
-        <footer className="mt-20 text-gray-600 text-sm pb-8">Created by Mike Schwartz • Troy, MI</footer>
+        <footer className="mt-20 text-gray-600 text-sm text-center">
+          Created by Mike Schwartz • Troy, MI
+        </footer>
       </main>
     </>
   );
