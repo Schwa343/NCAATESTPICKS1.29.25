@@ -99,7 +99,7 @@ function LiveTicker() {
           },
           status: comp.status.type.description || 'Scheduled',
           clock: comp.status.displayClock || '',
-          date: new Date(comp.date).toLocaleDateString('en-CA'), // reliable YYYY-MM-DD
+          date: new Date(comp.date).toLocaleDateString('en-CA'),
           startTime: comp.date,
         };
       }).filter(Boolean) as Game[];
@@ -154,6 +154,7 @@ export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentDay, setCurrentDay] = useState(1);
   const [usedTeams, setUsedTeams] = useState<string[]>([]);
+  const [editingCell, setEditingCell] = useState<{ name: string; round: string } | null>(null);
 
   const shortName = `${firstName.trim().charAt(0).toUpperCase() + firstName.trim().slice(1).toLowerCase()} ${lastInitial.trim().toUpperCase()}`.trim();
 
@@ -185,7 +186,7 @@ export default function Home() {
           awayTeam: { name: away.team.shortDisplayName || '', score: away.score || '—', rank: away.curatedRank?.current || '' },
           status: comp?.status?.type?.description || 'Scheduled',
           clock: comp?.status?.displayClock || '',
-          date: new Date(comp.date).toLocaleDateString('en-CA'), // ensures YYYY-MM-DD local
+          date: new Date(comp.date).toLocaleDateString('en-CA'),
           startTime: comp.date,
         };
       }).filter(Boolean) as Game[];
@@ -208,11 +209,18 @@ export default function Home() {
         if (!grouped.has(p.name)) grouped.set(p.name, []);
         grouped.get(p.name)!.push(p);
       });
-      const users = Array.from(grouped.entries()).map(([name, picks]) => ({
-        name,
-        picks: picks.sort((a, b) => (a.createdAt || '0').localeCompare(b.createdAt || '0')),
-        status: picks.some(p => p.status === 'eliminated') ? 'eliminated' : 'alive',
-      }));
+
+      const users = participantFullNames.map(fullName => {
+        const short = getShortName(fullName);
+        const existing = grouped.get(short) || [];
+        return {
+          name: short,
+          fullName,
+          picks: existing.sort((a, b) => (a.createdAt || '0').localeCompare(b.createdAt || '0')),
+          status: existing.some(p => p.status === 'eliminated') ? 'eliminated' : 'alive',
+        };
+      });
+
       setAllUsers(users);
       setLoading(false);
 
@@ -271,7 +279,7 @@ export default function Home() {
 
     if (shortName.toLowerCase() === 'stanley s') {
       setIsAdmin(true);
-      setStatusMessage('Admin mode activated — picks revealed');
+      setStatusMessage('Admin mode activated — click any pick to edit');
       setFirstName(''); setLastInitial('');
       return;
     }
@@ -333,6 +341,52 @@ export default function Home() {
     }
   };
 
+  const handleAdminEdit = async (userName: string, round: string, newTeam: string) => {
+    if (!newTeam) {
+      setEditingCell(null);
+      return;
+    }
+
+    const user = allUsers.find(u => u.name === userName);
+    if (!user) return;
+
+    // Prevent saving a team already used by this player on another day
+    const alreadyUsed = user.picks.some(p => p.team === newTeam && p.round !== round);
+    if (alreadyUsed) {
+      setStatusMessage(`Cannot assign ${newTeam} — already used by ${userName} on another day`);
+      setEditingCell(null);
+      return;
+    }
+
+    try {
+      const q = query(collection(db, 'picks'), where('name', '==', userName), where('round', '==', round));
+      const existing = await getDocs(q);
+
+      if (!existing.empty) {
+        await updateDoc(doc(db, 'picks', existing.docs[0].id), {
+          team: newTeam,
+          timestamp: serverTimestamp(),
+        });
+      } else {
+        await addDoc(collection(db, 'picks'), {
+          name: userName,
+          team: newTeam,
+          round,
+          timestamp: serverTimestamp(),
+          createdAt: new Date().toISOString(),
+          status: 'pending',
+        });
+      }
+
+      setStatusMessage(`Updated ${userName}'s ${round} to ${newTeam}`);
+      setTimeout(() => setStatusMessage(''), 3000);
+    } catch (err: any) {
+      setStatusMessage('Save failed: ' + err.message);
+    }
+
+    setEditingCell(null);
+  };
+
   const today = new Date();
   const dayOffset = currentDay - 1;
   const dayDate = new Date(today);
@@ -355,35 +409,43 @@ export default function Home() {
 
   return (
     <>
+      <style jsx global>{`
+        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        .animate-marquee { animation: marquee 70s linear infinite; }
+        .heartbeat-alive { display: inline-block; width: 60px; height: 20px; margin-left: 8px; vertical-align: middle; }
+        .heartbeat-alive svg { width: 100%; height: 100%; }
+        .heartbeat-alive .pulse { animation: heartbeat 1.4s infinite ease-in-out; stroke: #22c55e; stroke-width: 3; fill: none; }
+        @keyframes heartbeat {
+          0%, 100% { d: path("M0 10 L10 10 L15 2 L20 18 L25 10 L35 10"); }
+          40% { d: path("M0 10 L10 10 L13 4 L17 16 L21 10 L35 10"); }
+          60% { d: path("M0 10 L10 10 L14 6 L18 14 L22 10 L35 10"); }
+        }
+        .flatline-dead { display: inline-block; width: 60px; height: 20px; margin-left: 8px; vertical-align: middle; border-bottom: 3px solid #ef4444; }
+      `}</style>
+
       <LiveTicker />
 
-      <main className="min-h-screen bg-[#f5f5f5] pt-28 pb-12 px-4 md:px-8">
-        <Image src="https://upload.wikimedia.org/wikipedia/commons/2/28/March_Madness_logo.svg" alt="March Madness" width={400} height={200} className="mx-auto mb-6 rounded-lg" priority />
+      <main className="min-h-screen bg-[#f5f5f5] pt-28 pb-12 px-4 md:px-8 flex flex-col items-center">
+        <Image src="https://upload.wikimedia.org/wikipedia/commons/2/28/March_Madness_logo.svg" alt="March Madness" width={400} height={200} className="mb-6 rounded-lg" priority />
 
         <h1 className="text-4xl md:text-5xl font-bold text-[#2A6A5E] text-center mb-2">NCAA Survivor Pool</h1>
-        <p className="text-xl text-gray-700 text-center mb-8 max-w-2xl mx-auto">Pick one team per day — no repeats — last one standing wins</p>
+        <p className="text-xl text-gray-700 text-center mb-8 max-w-2xl">Pick one team per day — no repeats — last one standing wins</p>
 
         <div className="flex justify-center gap-4 mb-8">
           <input placeholder="First Name" value={firstName} onChange={e => setFirstName(e.target.value)} className="px-4 py-2 border rounded w-52" />
           <input placeholder="L" maxLength={1} value={lastInitial} onChange={e => setLastInitial(e.target.value.toUpperCase().slice(0,1))} className="w-14 text-center px-2 py-2 border rounded" />
         </div>
 
-        {isAdmin && <p className="text-center text-purple-700 font-bold mb-6">ADMIN MODE — picks visible</p>}
+        {isAdmin && <p className="text-center text-purple-700 font-bold mb-6">ADMIN MODE ACTIVE — click any pick cell to edit</p>}
 
         <div className="flex flex-wrap justify-center gap-3 mb-8">
           <button onClick={() => setCurrentDay(1)} className={`px-6 py-2 rounded-full ${currentDay === 1 ? 'bg-[#2A6A5E] text-white' : 'bg-gray-200'}`}>{todayLabel}</button>
           <button onClick={() => setCurrentDay(2)} className={`px-6 py-2 rounded-full ${currentDay === 2 ? 'bg-[#2A6A5E] text-white' : 'bg-gray-200'}`}>{tomorrowStr}</button>
         </div>
 
-        {dayGames.length === 0 && (
-          <p className="text-center text-red-600 mb-4">
-            No games loaded for {dayStr} — filtering on this date. Check console for scoreboard dates.
-          </p>
-        )}
-
-        <div className="flex flex-wrap justify-center gap-3 max-w-5xl mx-auto mb-10">
+        <div className="flex flex-wrap justify-center gap-3 max-w-5xl mb-10">
           {availableTeams.length === 0 ? (
-            <p className="text-gray-500 italic">No teams available for this date</p>
+            <p className="text-gray-500 italic">No games found for this date yet...</p>
           ) : (
             availableTeams.map(team => {
               const disabled = usedTeams.includes(team) || dayLocked || isEliminated;
@@ -404,66 +466,113 @@ export default function Home() {
         <button
           onClick={handleSubmit}
           disabled={!selectedTeam || !shortName || dayLocked || isEliminated}
-          className="mx-auto block w-full max-w-md bg-[#2A6A5E] text-white py-4 rounded-xl text-xl hover:bg-[#1e4c43] disabled:opacity-50 shadow"
+          className="w-full max-w-md bg-[#2A6A5E] text-white py-4 rounded-xl text-xl hover:bg-[#1e4c43] disabled:opacity-50 shadow"
         >
           {dayLocked ? 'Locked' : isEliminated ? 'Eliminated' : 'Submit Pick'}
         </button>
 
         {statusMessage && <p className={`mt-6 text-center text-lg ${statusMessage.includes('Error') || statusMessage.includes('locked') ? 'text-red-600' : 'text-[#2A6A5E]'}`}>{statusMessage}</p>}
 
-        <div className="w-full max-w-5xl mt-16 overflow-x-auto">
-          <h2 className="text-3xl font-bold text-[#2A6A5E] mb-6 text-center">Standings & Picks</h2>
-          {loading ? <p className="text-center text-gray-600">Loading...</p> : (
-            <table className="w-full bg-white rounded-lg shadow overflow-hidden">
-              <thead className="bg-[#2A6A5E] text-white">
-                <tr>
-                  <th className="py-4 px-5 text-left">Name</th>
-                  <th className="py-4 px-5 text-center">Status</th>
-                  <th className="py-4 px-5 text-center">{todayLabel}</th>
-                  <th className="py-4 px-5 text-center">{tomorrowStr}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allUsers.map(user => {
-                  const isMe = user.name === shortName;
-                  const visible = isMe || isAdmin;
-                  const isDead = user.status === 'eliminated';
+        <div className="w-full max-w-5xl mt-16 flex justify-center">
+          <div className="overflow-x-auto">
+            <h2 className="text-3xl font-bold text-[#2A6A5E] mb-6 text-center">Standings & Picks</h2>
+            {loading ? (
+              <p className="text-center text-gray-600">Loading...</p>
+            ) : (
+              <table className="bg-white rounded-lg shadow overflow-hidden min-w-[800px]">
+                <thead className="bg-[#2A6A5E] text-white">
+                  <tr>
+                    <th className="py-4 px-6 text-left">Name</th>
+                    <th className="py-4 px-6 text-center">Status</th>
+                    <th className="py-4 px-6 text-center">{todayLabel}</th>
+                    <th className="py-4 px-6 text-center">{tomorrowStr}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allUsers.map(user => {
+                    const isMe = user.name === shortName;
+                    const visible = isMe || isAdmin;
+                    const isDead = user.status === 'eliminated';
 
-                  return (
-                    <tr key={user.name} className={`border-b hover:bg-gray-50 ${isDead ? 'bg-red-50 line-through opacity-80' : ''}`}>
-                      <td className={`py-4 px-5 font-medium ${isDead ? 'text-red-600' : 'text-gray-800'}`}>{user.name}</td>
-                      <td className="py-4 px-5 text-center">
-                        {isDead ? <span className="text-red-600 font-bold">Dead</span> : <span className="text-green-600 font-bold">Alive</span>}
-                      </td>
-                      {[1,2].map(d => {
-                        const round = `Day ${d}`;
-                        const pickObj = user.picks.find((p: Pick) => p.round === round);
-                        const pickTeam = pickObj?.team || '—';
+                    return (
+                      <tr key={user.name} className={`border-b hover:bg-gray-50 ${isDead ? 'bg-red-50 opacity-80' : ''}`}>
+                        <td className={`py-4 px-6 font-medium ${isDead ? 'text-red-600 line-through' : 'text-gray-800'}`}>
+                          {user.name}
+                        </td>
+                        <td className="py-4 px-6 text-center">
+                          {isDead ? (
+                            <>
+                              <span className="text-red-600 font-bold">Dead</span>
+                              <div className="flatline-dead" />
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-green-600 font-bold">Alive</span>
+                              <div className="heartbeat-alive">
+                                <svg viewBox="0 0 35 20">
+                                  <path className="pulse" d="M0 10 L10 10 L15 2 L20 18 L25 10 L35 10" />
+                                </svg>
+                              </div>
+                            </>
+                          )}
+                        </td>
+                        {[1, 2].map(d => {
+                          const round = `Day ${d}`;
+                          const pickObj = user.picks.find((p: Pick) => p.round === round);
+                          const pickTeam = pickObj?.team || '—';
 
-                        let cellClass = 'bg-gray-50 text-gray-500';
-                        let display = pickTeam;
+                          let cellClass = 'bg-gray-50 text-gray-500';
+                          let display = pickTeam;
 
-                        if (pickTeam !== '—') {
-                          if (pickObj?.status === 'won') cellClass = 'bg-green-100 text-green-800 font-bold';
-                          else if (pickObj?.status === 'eliminated') cellClass = 'bg-red-100 text-red-800 font-bold line-through';
-                          else cellClass = 'bg-yellow-100 text-yellow-800';
-                        } else if (d === currentDay && dayLocked) {
-                          display = <span className="text-red-600 font-bold">SHAME</span>;
-                          cellClass = 'bg-red-50';
-                        }
+                          if (pickTeam !== '—') {
+                            if (pickObj?.status === 'won') cellClass = 'bg-green-100 text-green-800 font-bold';
+                            else if (pickObj?.status === 'eliminated') cellClass = 'bg-red-100 text-red-800 font-bold line-through';
+                            else cellClass = 'bg-yellow-100 text-yellow-800';
+                          } else if (d === currentDay && dayLocked) {
+                            display = <span className="text-red-600 font-bold">SHAME</span>;
+                            cellClass = 'bg-red-50';
+                          }
 
-                        return (
-                          <td key={d} className={`py-4 px-5 text-center font-semibold ${visible ? cellClass : 'bg-gray-200 text-transparent blur-sm'}`}>
-                            {visible ? display : '█████'}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+                          const isEditing = isAdmin && editingCell?.name === user.name && editingCell?.round === round;
+
+                          return (
+                            <td
+                              key={d}
+                              className={`py-4 px-6 text-center font-semibold cursor-pointer ${visible ? cellClass : 'bg-gray-200 text-transparent blur-sm'}`}
+                              onClick={() => {
+                                if (isAdmin && visible && !isEditing) {
+                                  setEditingCell({ name: user.name, round });
+                                }
+                              }}
+                            >
+                              {isEditing ? (
+                                <select
+                                  autoFocus
+                                  defaultValue={pickTeam}
+                                  onChange={(e) => handleAdminEdit(user.name, round, e.target.value)}
+                                  onBlur={() => setEditingCell(null)}
+                                  className="w-full text-center border border-gray-300 rounded px-2 py-1 bg-white"
+                                >
+                                  <option value="">— Clear —</option>
+                                  {availableTeams.map(t => (
+                                    <option key={t} value={t}>{t}</option>
+                                  ))}
+                                </select>
+                              ) : visible ? (
+                                display
+                              ) : (
+                                '█████'
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
         <footer className="mt-20 text-gray-600 text-sm text-center">Created by Mike Schwartz • Troy, MI</footer>
