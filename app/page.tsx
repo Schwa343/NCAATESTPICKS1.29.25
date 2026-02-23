@@ -114,7 +114,7 @@ function LiveTicker() {
             startTime: comp.date || '',
           };
         })
-        .filter((g): g is Game => !!g);
+        .filter(g => !!g) as Game[];
 
       const rankedOnly = formatted.filter((g) => {
         return typeof g.homeTeam.rank === 'number' || typeof g.awayTeam.rank === 'number';
