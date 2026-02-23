@@ -23,7 +23,7 @@ interface Game {
   status: string;
   clock?: string;
   date: string;
-  startTime: string;     // made required — your code always sets it
+  startTime: string;
 }
 
 interface Pick {
@@ -37,12 +37,12 @@ interface Pick {
 }
 
 const pickDates = [
-  { day: 1, label: 'Mon Feb 24', date: '2026-02-24', noonET: '2026-02-24T12:00:00-05:00' },
-  { day: 2, label: 'Tue Feb 25', date: '2026-02-25', noonET: '2026-02-25T12:00:00-05:00' },
-  { day: 3, label: 'Wed Feb 26', date: '2026-02-26', noonET: '2026-02-26T12:00:00-05:00' },
-  { day: 4, label: 'Thu Feb 27', date: '2026-02-27', noonET: '2026-02-27T12:00:00-05:00' },
-  { day: 5, label: 'Fri Feb 28', date: '2026-02-28', noonET: '2026-02-28T12:00:00-05:00' },
-  { day: 6, label: 'Sat Mar 1',  date: '2026-03-01',  noonET: '2026-03-01T12:00:00-05:00' },
+  { day: 1, label: 'Tue Feb 24', date: '2026-02-24', noonET: '2026-02-24T12:00:00-05:00' },
+  { day: 2, label: 'Wed Feb 25', date: '2026-02-25', noonET: '2026-02-25T12:00:00-05:00' },
+  { day: 3, label: 'Thu Feb 26', date: '2026-02-26', noonET: '2026-02-26T12:00:00-05:00' },
+  { day: 4, label: 'Fri Feb 27', date: '2026-02-27', noonET: '2026-02-27T12:00:00-05:00' },
+  { day: 5, label: 'Sat Feb 28', date: '2026-02-28', noonET: '2026-02-28T12:00:00-05:00' },
+  { day: 6, label: 'Sun Mar 1',  date: '2026-03-01', noonET: '2026-03-01T12:00:00-05:00' },
 ];
 
 const participants = [
@@ -67,7 +67,6 @@ export default function Home() {
 
   const shortName = `${firstName.trim().charAt(0).toUpperCase() + firstName.trim().slice(1).toLowerCase()} ${lastInitial.trim().toUpperCase()}`.trim();
 
-  // ── Scoreboard fetch ────────────────────────────────────────────────
   useEffect(() => {
     const fetchScores = async () => {
       try {
@@ -97,7 +96,7 @@ export default function Home() {
               startTime: e.date || '',
             };
           })
-          .filter(g => !!g && g.homeTeam?.name && g.awayTeam?.name) as Game[];
+          .filter((g: any) => !!g && g.homeTeam?.name && g.awayTeam?.name) as Game[];
 
         setGames(formatted);
       } catch (err) {
@@ -110,7 +109,6 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
-  // ── Picks realtime ──────────────────────────────────────────────────
   useEffect(() => {
     const q = query(collection(db, 'picks'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snap) => {
@@ -131,7 +129,6 @@ export default function Home() {
     return unsubscribe;
   }, []);
 
-  // ── Lock name + used teams ──────────────────────────────────────────
   useEffect(() => {
     if (!shortName) return;
     const user = picksData.find(u => u.name === shortName);
@@ -207,7 +204,7 @@ export default function Home() {
         });
       }
 
-      setStatusMessage(`Saved ${selectedTeam}`);
+      setStatusMessage(`Saved ${selectedTeam} for ${pickDates[currentDay-1].label}`);
       setSelectedTeam('');
     } catch (err: any) {
       setStatusMessage('Error: ' + err.message);
@@ -228,7 +225,7 @@ export default function Home() {
         />
 
         <h1 className="text-4xl md:text-5xl font-bold text-teal-700 text-center mb-3">
-          Survivor Pool – Feb 24 to Mar 1
+          Survivor Pool – Tue Feb 24 to Sun Mar 1
         </h1>
 
         <p className="text-center text-gray-700 mb-8">
@@ -267,7 +264,7 @@ export default function Home() {
 
         <div className="flex flex-wrap gap-3 justify-center mb-8">
           {available.length === 0 ? (
-            <p className="text-gray-500">No games loaded yet for this day</p>
+            <p className="text-gray-500">No games loaded yet for {pickDates[currentDay-1].label}</p>
           ) : available.map(team => (
             <button
               key={team}
