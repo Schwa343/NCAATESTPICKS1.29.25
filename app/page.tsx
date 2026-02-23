@@ -33,7 +33,7 @@ interface Pick {
   round: string;
   timestamp?: any;
   createdAt?: string;
-  status?: string;
+  status?: string; // 'won' | 'eliminated' | undefined
 }
 
 const pickDates = [
@@ -42,7 +42,7 @@ const pickDates = [
   { day: 3, label: 'Thu Feb 26', date: '2026-02-26', noonET: '2026-02-26T12:00:00-05:00' },
   { day: 4, label: 'Fri Feb 27', date: '2026-02-27', noonET: '2026-02-27T12:00:00-05:00' },
   { day: 5, label: 'Sat Feb 28', date: '2026-02-28', noonET: '2026-02-28T12:00:00-05:00' },
-  { day: 6, label: 'Sun Mar 1',  date: '2026-03-01', noonET: '2026-03-01T12:00:00-05:00' },
+  { day: 6, label: 'Sun Mar 1',  date: '2026-03-01',  noonET: '2026-03-01T12:00:00-05:00' },
 ];
 
 const participants = [
@@ -165,9 +165,9 @@ export default function Home() {
       return;
     }
 
-    if (!participants.some(p => p.replace(/\s+/g,'').toLowerCase() === shortName.replace(/\s+/g,'').toLowerCase())) {
-      setStatusMessage('Name not recognized – check spelling');
-      return;
+    const isKnown = participants.some(p => p.replace(/\s+/g,'').toLowerCase() === shortName.replace(/\s+/g,'').toLowerCase());
+    if (!isKnown) {
+      setStatusMessage(`"${shortName}" not in the list — submitting anyway`);
     }
 
     if (dayLocked) {
@@ -177,6 +177,17 @@ export default function Home() {
 
     if (usedTeams.includes(selectedTeam)) {
       setStatusMessage('You already picked this team');
+      return;
+    }
+
+    if (!selectedTeam) {
+      setStatusMessage('Select a team first');
+      return;
+    }
+
+    const currentUser = picksData.find(u => u.name === shortName);
+    if (currentUser?.status === 'eliminated') {
+      setStatusMessage('You are eliminated — no more picks allowed');
       return;
     }
 
@@ -204,12 +215,42 @@ export default function Home() {
         });
       }
 
-      setStatusMessage(`Saved ${selectedTeam} for ${pickDates[currentDay-1].label}`);
+      setStatusMessage(`Saved ${selectedTeam} for ${pickDates[currentDay - 1].label}`);
       setSelectedTeam('');
+      setNameLocked(true);
     } catch (err: any) {
-      setStatusMessage('Error: ' + err.message);
+      setStatusMessage('Error saving pick: ' + err.message);
     }
   };
+
+  const getPickStyle = (pick: Pick | undefined, round: string) => {
+    if (!pick) return 'text-gray-400'; // no pick
+
+    const dayInfo = pickDates.find(d => `Day ${d.day}` === round);
+    if (!dayInfo) return 'text-gray-400';
+
+    const game = games.find(g => g.date === dayInfo.date &&
+      (g.homeTeam.name.toLowerCase().includes(pick.team.toLowerCase()) ||
+       g.awayTeam.name.toLowerCase().includes(pick.team.toLowerCase())));
+
+    if (!game) return 'text-gray-400';
+
+    const isFinal = game.status.toLowerCase().includes('final') || game.status.toLowerCase().includes('end');
+
+    if (!isFinal) return 'bg-yellow-100 text-yellow-800 font-medium'; // yellow = in progress
+
+    if (pick.status === 'won') return 'bg-green-100 text-green-800 font-bold';
+    if (pick.status === 'eliminated') return 'bg-red-100 text-red-800 font-bold line-through';
+
+    return 'text-gray-600';
+  };
+
+  // Table rows — all participants always shown
+  const tableRows = participants.map(fullName => {
+    const short = `${fullName.split(' ')[0]} ${fullName.split(' ').pop()?.[0].toUpperCase() || ''}`;
+    const userData = picksData.find(u => u.name === short) || { picks: [], status: 'alive' };
+    return { fullName, shortName: short, picks: userData.picks, status: userData.status };
+  });
 
   return (
     <main className="min-h-screen bg-gray-50 pt-20 pb-12 px-4">
@@ -225,7 +266,7 @@ export default function Home() {
         />
 
         <h1 className="text-4xl md:text-5xl font-bold text-teal-700 text-center mb-3">
-          Survivor Pool – Tue Feb 24 to Sun Mar 1
+          Survivor Pool – Feb 24 to Mar 1
         </h1>
 
         <p className="text-center text-gray-700 mb-8">
@@ -264,7 +305,7 @@ export default function Home() {
 
         <div className="flex flex-wrap gap-3 justify-center mb-8">
           {available.length === 0 ? (
-            <p className="text-gray-500">No games loaded yet for {pickDates[currentDay-1].label}</p>
+            <p className="text-gray-500">No games loaded yet for this day</p>
           ) : available.map(team => (
             <button
               key={team}
@@ -292,7 +333,7 @@ export default function Home() {
         )}
 
         <div className="mt-16">
-          <h2 className="text-2xl font-bold text-teal-700 mb-4 text-center">Picks</h2>
+          <h2 className="text-2xl font-bold text-teal-700 mb-4 text-center">Picks & Standings</h2>
           {loading ? (
             <p className="text-center">Loading...</p>
           ) : (
@@ -301,29 +342,42 @@ export default function Home() {
                 <thead>
                   <tr className="bg-teal-700 text-white">
                     <th className="p-3 text-left">Name</th>
-                    <th className="p-3">Status</th>
+                    <th className="p-3 text-center">Status</th>
                     {pickDates.map(d => (
                       <th key={d.day} className="p-3 text-center">{d.label}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {picksData.map(user => (
-                    <tr key={user.name} className="border-b">
-                      <td className="p-3">{user.name}</td>
-                      <td className="p-3 text-center">
-                        {user.status === 'eliminated' ? 'Out' : 'Alive'}
-                      </td>
-                      {pickDates.map(d => {
-                        const p = user.picks.find((pick: any) => pick.round === `Day ${d.day}`);
-                        return (
-                          <td key={d.day} className="p-3 text-center">
-                            {p?.team || '—'}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                  {tableRows.map(entry => {
+                    const isEliminated = entry.status === 'eliminated';
+                    const nameClass = isEliminated
+                      ? 'text-red-700 font-medium line-through'
+                      : 'text-green-700 font-medium';
+
+                    return (
+                      <tr key={entry.fullName} className={`border-b ${isEliminated ? 'bg-red-50' : ''}`}>
+                        <td className={`p-3 ${nameClass}`}>{entry.fullName}</td>
+                        <td className="p-3 text-center font-medium">
+                          {isEliminated ? (
+                            <span className="text-red-600">Out</span>
+                          ) : (
+                            <span className="text-green-600">Alive</span>
+                          )}
+                        </td>
+                        {pickDates.map(d => {
+                          const p = entry.picks.find((pick: any) => pick.round === `Day ${d.day}`);
+                          const cellClass = getPickStyle(p, `Day ${d.day}`);
+
+                          return (
+                            <td key={d.day} className={`p-3 text-center ${cellClass}`}>
+                              {p?.team || '—'}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
